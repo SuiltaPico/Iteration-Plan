@@ -3,13 +3,14 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
   createStrategy, CRITERIA_LABEL, db, deleteLog, deleteStrategy, mergeDraftIntoOriginal, OUTCOME_LABEL, outcomeOf, pendingToDraft,
-  outcomeTally, publishDraft, saveAsNewVersion, setStatus, skippedRecently, STATUS_LABEL, updateStrategy, versionOf,
+  outcomeTally, publishDraft, saveAsNewVersion, setStatus, skippedRecently, STATUS_LABEL, updateStrategy, versionOf, versionSince,
   type Status, type Strategy,
 } from '../db'
 import { Score, StatusBadge } from './ScoreBadge'
 import { confirmDialog, toast } from './Dialogs'
 import Menu from './Menu'
 import { LogRow } from './QuickLog'
+import { MetricSummary, SituationBreakdown } from './Insights'
 import { contentChanged, flushEditors, openAi } from '../bus'
 import { daysSince, fmtDate, fmtRelative } from '../util'
 
@@ -325,11 +326,25 @@ function StrategyView({ s }: { s: Strategy }) {
             </section>
           )}
 
+          {!isDraft && (problem?.metrics?.length ?? 0) > 0 && logs && reviews && (
+            <section className="rail-card">
+              <h4>指标{versionOf(s) > 1 ? '（这一版）' : ''}</h4>
+              <MetricSummary metrics={problem!.metrics!} logs={logs} since={versionSince(s, reviews)} />
+            </section>
+          )}
+
+          {!isDraft && logs && reviews && logs.some((l) => l.tags?.length && l.createdAt >= versionSince(s, reviews)) && (
+            <section className="rail-card">
+              <h4>按情境{versionOf(s) > 1 ? '（这一版）' : ''}</h4>
+              <SituationBreakdown logs={logs.filter((l) => l.createdAt >= versionSince(s, reviews))} />
+            </section>
+          )}
+
           {!isDraft && logs && logs.length > 0 && (
             <section className="rail-card">
               <h4>使用记录</h4>
               <div className="log-list">
-                {logs.slice(0, 6).map((l) => <LogRow key={l.id} l={l} onDelete={async () => {
+                {logs.slice(0, 6).map((l) => <LogRow key={l.id} l={l} metrics={problem?.metrics} onDelete={async () => {
                   if (await confirmDialog('删除这条使用记录？', { ok: '删除' })) deleteLog(l.id)
                 }} />)}
                 {logs.length > 6 && <span className="muted sm">共 {logs.length} 笔</span>}
@@ -349,6 +364,7 @@ function StrategyView({ s }: { s: Strategy }) {
                       {r.delta > 0 ? `+${r.delta}` : r.delta < 0 ? r.delta : '·'}
                     </span>
                     <div className="tl-body">
+                      {r.emoji && <span className="tl-emoji">{r.emoji}</span>}
                       {r.statusChange && <div className="status-change">{STATUS_LABEL[r.statusChange.from]} → <b>{STATUS_LABEL[r.statusChange.to]}</b></div>}
                       {!r.statusChange && r.outcome && r.outcome !== 'note' && (
                         <div className={`outcome o-${outcomeOf(r)}`}>{OUTCOME_LABEL[outcomeOf(r)]}{r.criteriaMet && <span className="muted"> · 标准{CRITERIA_LABEL[r.criteriaMet]}</span>}</div>

@@ -2,12 +2,14 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
-  addReview, CRITERIA_LABEL, db, OUTCOME_LABEL, outcomeOf, outcomeTally, setStatus, skippedRecently, STATUS_LABEL, versionOf,
+  addReview, CRITERIA_LABEL, db, OUTCOME_LABEL, outcomeOf, outcomeTally, setStatus, skippedRecently, STATUS_LABEL, versionOf, versionSince,
   type CriteriaMet, type Outcome, type Status,
 } from '../db'
 import { daysSince, fmtRelative } from '../util'
 import { Score, StatusBadge } from './ScoreBadge'
 import { LogRow } from './QuickLog'
+import EmojiPicker from './EmojiPicker'
+import { MetricSummary, SituationBreakdown } from './Insights'
 
 const Editor = lazy(() => import('./Editor'))
 
@@ -21,6 +23,7 @@ export default function ReviewMode() {
   const [note, setNote] = useState('')
   const [met, setMet] = useState<CriteriaMet | undefined>()
   const [decision, setDecision] = useState<Status | undefined>()
+  const [emoji, setEmoji] = useState<string | undefined>()
   const [busy, setBusy] = useState(false)
   const [flash, setFlash] = useState<{ text: string; tone: 'pos' | 'neg' | 'info' } | null>(null)
   const [askLesson, setAskLesson] = useState(false)
@@ -59,7 +62,7 @@ export default function ReviewMode() {
     if (!s || busy) return
     if (outcome === 'note' && !note.trim()) { noteRef.current?.focus(); return }
     setBusy(true)
-    await addReview(s.id, outcome, note.trim(), s.criteria?.trim() && outcome !== 'skipped' && outcome !== 'note' ? met : undefined)
+    await addReview(s.id, outcome, note.trim(), s.criteria?.trim() && outcome !== 'skipped' && outcome !== 'note' ? met : undefined, emoji)
     const label = outcome === 'worked' ? '+1' : outcome === 'failed' ? '−1' : outcome === 'skipped' ? '记下了：没怎么执行' : '记下了'
     const to = decision && decision !== s.status ? decision : undefined
     if (to === 'eliminated') {
@@ -89,6 +92,9 @@ export default function ReviewMode() {
   const history = (reviews ?? []).filter((r) => r.note || r.statusChange)
   const lastReviewAt = (reviews ?? []).find((r) => !r.event)?.createdAt ?? 0
   const newLogs = (logs ?? []).filter((l) => l.createdAt > lastReviewAt)
+  const since = s && reviews ? versionSince(s, reviews) : 0
+  const metrics = problem?.metrics ?? []
+  const versionLogs = (logs ?? []).filter((l) => l.createdAt >= since)
 
   return (
     <div className="review-shell">
@@ -159,8 +165,25 @@ export default function ReviewMode() {
             {newLogs.length > 0 && (
               <div className="review-history">
                 <div className="label">{lastReviewAt ? '上次复盘以来' : '这段时间'}记了 {newLogs.length} 笔</div>
-                {newLogs.slice(0, 8).map((l) => <LogRow key={l.id} l={l} />)}
+                {newLogs.slice(0, 8).map((l) => <LogRow key={l.id} l={l} metrics={metrics} />)}
                 {newLogs.length > 8 && <span className="muted sm">还有 {newLogs.length - 8} 笔较早的记录</span>}
+              </div>
+            )}
+
+            {(metrics.length > 0 || versionLogs.some((l) => l.tags?.length)) && (
+              <div className="review-insights">
+                {metrics.length > 0 && (
+                  <div className="review-history">
+                    <div className="label">指标{versionOf(s) > 1 ? '（这一版）' : ''}</div>
+                    <MetricSummary metrics={metrics} logs={logs ?? []} since={since} />
+                  </div>
+                )}
+                {versionLogs.some((l) => l.tags?.length) && (
+                  <div className="review-history">
+                    <div className="label">按情境{versionOf(s) > 1 ? '（这一版）' : ''}</div>
+                    <SituationBreakdown logs={versionLogs} />
+                  </div>
+                )}
               </div>
             )}
 
@@ -170,6 +193,7 @@ export default function ReviewMode() {
                 {history.slice(0, 3).map((r) => (
                   <div key={r.id} className="review-history-row">
                     <span className={`delta ${r.delta > 0 ? 'pos' : r.delta < 0 ? 'neg' : ''}`}>{r.event ? 'v' : r.delta > 0 ? `+${r.delta}` : r.delta < 0 ? r.delta : '·'}</span>
+                    {r.emoji && <span className="log-emoji">{r.emoji}</span>}
                     <span>
                       {!r.event && outcomeOf(r) === 'skipped' && <span className="muted">没怎么执行 · </span>}
                       {r.note || (r.statusChange && `${STATUS_LABEL[r.statusChange.from as Status]} → ${STATUS_LABEL[r.statusChange.to as Status]}`)}
@@ -196,6 +220,7 @@ export default function ReviewMode() {
                     ))}
                   </div>
                 )}
+                <EmojiPicker value={emoji} onChange={setEmoji} />
                 <textarea id="review-note" ref={noteRef} rows={3} value={note} onChange={(e) => setNote(e.target.value)}
                   placeholder="写下感受、观察或想调整的地方（选「只记录」时必填）" />
                 <div className="met-row">
