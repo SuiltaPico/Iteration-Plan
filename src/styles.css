@@ -618,3 +618,6 @@ textarea { resize: vertical; }
 .tally-line .pos { color: var(--pos); }
 .tally-line .neg { color: var(--neg); }
 .tally-line .warn { color: var(--warn); }
+.web-box { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 10px; background: var(--surface-2); }
+.switch-row { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 14px; }
+.switch-row input { width: 16px; height: 16px; accent-color: var(--primary); }
