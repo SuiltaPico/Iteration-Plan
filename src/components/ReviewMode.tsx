@@ -7,6 +7,7 @@ import {
 } from '../db'
 import { daysSince, fmtRelative } from '../util'
 import { Score, StatusBadge } from './ScoreBadge'
+import { LogRow } from './QuickLog'
 
 const Editor = lazy(() => import('./Editor'))
 
@@ -34,6 +35,7 @@ export default function ReviewMode() {
   const topic = useLiveQuery(() => (s ? db.topics.get(s.topicId) : undefined), [s?.topicId])
   const problem = useLiveQuery(() => (s?.problemId ? db.problems.get(s.problemId) : undefined), [s?.problemId])
   const reviews = useLiveQuery(() => db.reviews.where('strategyId').equals(id).reverse().sortBy('createdAt'), [id])
+  const logs = useLiveQuery(() => db.logs.where('strategyId').equals(id).reverse().sortBy('createdAt'), [id])
 
   useEffect(() => { noteRef.current?.focus() }, [s?.id])
   // 正文超出折叠高度时才显示「展开全文」
@@ -80,6 +82,8 @@ export default function ReviewMode() {
 
   const skipped = s && reviews ? skippedRecently(s, reviews) : 0
   const history = (reviews ?? []).filter((r) => r.note || r.statusChange)
+  const lastReviewAt = (reviews ?? []).find((r) => !r.event)?.createdAt ?? 0
+  const newLogs = (logs ?? []).filter((l) => l.createdAt > lastReviewAt)
 
   return (
     <div className="review-shell">
@@ -146,6 +150,14 @@ export default function ReviewMode() {
               <div ref={contentRef} className={`review-content ${expanded ? 'open' : ''}`}>
                 <Suspense fallback={null}><Editor key={s.id} value={s.content} readOnly /></Suspense>
                 {!expanded && overflow && <button className="review-expand" onClick={() => setExpanded(true)}>展开全文</button>}
+              </div>
+            )}
+
+            {newLogs.length > 0 && (
+              <div className="review-history">
+                <div className="label">{lastReviewAt ? '上次复盘以来' : '这段时间'}记了 {newLogs.length} 笔</div>
+                {newLogs.slice(0, 8).map((l) => <LogRow key={l.id} l={l} />)}
+                {newLogs.length > 8 && <span className="muted sm">还有 {newLogs.length - 8} 笔较早的记录</span>}
               </div>
             )}
 

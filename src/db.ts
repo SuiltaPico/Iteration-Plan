@@ -11,6 +11,9 @@ export interface Topic {
   keepAt: number
   /** 分数 ≤ eliminateAt 时，策略自动「淘汰」 */
   eliminateAt: number
+  /** 多久主动问一次（天）：试用中 / 已留存，默认 7 / 30 */
+  askDaysTrial?: number
+  askDaysKept?: number
   order: number
   createdAt: number
   updatedAt: number
@@ -85,12 +88,41 @@ export interface Review {
   createdAt: number
 }
 
+/** 「记一笔」：某次实际用了这个策略，当时的情况和结果。不计分，复盘时参考 */
+export type LogResult = 'good' | 'meh' | 'bad'
+export interface UsageLog {
+  id: string
+  strategyId: string
+  note: string
+  result?: LogResult
+  createdAt: number
+}
+export const LOG_RESULT_LABEL: Record<LogResult, string> = { good: '顺利', meh: '一般', bad: '不理想' }
+
+/** 杂项键值：profile =「关于我」 */
+export interface Meta {
+  key: string
+  value: string
+  updatedAt: number
+}
+
+/** 删除记录，同步时避免已删除的数据从其他设备「复活」 */
+export interface Tombstone {
+  id: string
+  table: SyncTable
+  at: number
+}
+export type SyncTable = 'topics' | 'problems' | 'strategies' | 'reviews' | 'logs' | 'meta'
+
 export const db = new Dexie('iteration-plan') as Dexie & {
   topics: EntityTable<Topic, 'id'>
   problems: EntityTable<Problem, 'id'>
   strategies: EntityTable<Strategy, 'id'>
   reviews: EntityTable<Review, 'id'>
   pending: EntityTable<PendingEdit, 'strategyId'>
+  logs: EntityTable<UsageLog, 'id'>
+  meta: EntityTable<Meta, 'key'>
+  tombstones: EntityTable<Tombstone, 'id'>
 }
 
 db.version(1).stores({
@@ -105,6 +137,16 @@ db.version(3).stores({
   problems: 'id, topicId, order',
   strategies: 'id, topicId, problemId, parentId, status, score, updatedAt, createdAt',
 })
+db.version(4).stores({
+  logs: 'id, strategyId, createdAt',
+  meta: 'key',
+  tombstones: 'id',
+})
+
+const bury = (table: SyncTable, ids: string[]) => {
+  const at = Date.now()
+  return db.tombstones.bulkPut(ids.map((id) => ({ id, table, at })))
+}
 
 export const STATUS_LABEL: Record<Status, string> = {
   trial: '试用中',
@@ -144,12 +186,19 @@ export async function updateTopic(id: string, patch: Partial<Topic>) {
 }
 
 export async function deleteTopic(id: string) {
-  await db.transaction('rw', [db.topics, db.problems, db.strategies, db.reviews, db.pending], async () => {
+  await db.transaction('rw', [db.topics, db.problems, db.strategies, db.reviews, db.logs, db.pending, db.tombstones], async () => {
     const ids = await db.strategies.where('topicId').equals(id).primaryKeys()
+    const reviewIds = await db.reviews.where('strategyId').anyOf(ids).primaryKeys()
+    const logIds = await db.logs.where('strategyId').anyOf(ids).primaryKeys()
+    const problemIds = await db.problems.where('topicId').equals(id).primaryKeys()
+    await Promise.all([
+      bury('reviews', reviewIds), bury('logs', logIds), bury('strategies', ids), bury('problems', problemIds), bury('topics', [id]),
+    ])
     await db.pending.bulkDelete(ids)
-    await db.reviews.where('strategyId').anyOf(ids).delete()
+    await db.reviews.bulkDelete(reviewIds)
+    await db.logs.bulkDelete(logIds)
     await db.strategies.bulkDelete(ids)
-    await db.problems.where('topicId').equals(id).delete()
+    await db.problems.bulkDelete(problemIds)
     await db.topics.delete(id)
   })
 }
@@ -173,8 +222,10 @@ export async function updateProblem(id: string, patch: Partial<Problem>) {
 
 /** 删除问题：其下的策略移到「未归类」 */
 export async function deleteProblem(id: string) {
-  await db.transaction('rw', db.problems, db.strategies, async () => {
-    await db.strategies.where('problemId').equals(id).modify((s) => { delete s.problemId })
+  await db.transaction('rw', db.problems, db.strategies, db.tombstones, async () => {
+    const now = Date.now()
+    await db.strategies.where('problemId').equals(id).modify((s) => { delete s.problemId; s.updatedAt = now })
+    await bury('problems', [id])
     await db.problems.delete(id)
   })
 }
@@ -205,11 +256,16 @@ export async function updateStrategy(id: string, patch: Partial<Strategy>) {
 }
 
 export async function deleteStrategy(id: string) {
-  await db.transaction('rw', db.strategies, db.reviews, db.pending, async () => {
+  await db.transaction('rw', [db.strategies, db.reviews, db.logs, db.pending, db.tombstones], async () => {
+    const reviewIds = await db.reviews.where('strategyId').equals(id).primaryKeys()
+    const logIds = await db.logs.where('strategyId').equals(id).primaryKeys()
+    await Promise.all([bury('reviews', reviewIds), bury('logs', logIds), bury('strategies', [id])])
     await db.pending.delete(id)
-    await db.reviews.where('strategyId').equals(id).delete()
+    await db.reviews.bulkDelete(reviewIds)
+    await db.logs.bulkDelete(logIds)
     // 由它衍生的策略不再指向它
-    await db.strategies.where('parentId').equals(id).modify((s) => { delete s.parentId })
+    const now = Date.now()
+    await db.strategies.where('parentId').equals(id).modify((s) => { delete s.parentId; s.updatedAt = now })
     await db.strategies.delete(id)
   })
 }
@@ -238,7 +294,7 @@ export async function addReview(strategyId: string, outcome: Outcome, note: stri
     if (status !== s.status) r.statusChange = { from: s.status, to: status }
     await db.reviews.add(r)
     await db.strategies.update(strategyId, {
-      score, status, updatedAt: now, nextAskAt: now + askInterval(status),
+      score, status, updatedAt: now, nextAskAt: now + askInterval(status, t),
       ...(status !== s.status ? { statusChangedAt: now } : {}),
     })
     return status !== s.status ? status : undefined
@@ -266,9 +322,10 @@ export async function setStatus(strategyId: string, to: Status, note: string, le
 
 /** 保存为新版本：内容更新，版本 +1，分数清零重新试用（之前的复盘记录保留，标着旧版本号） */
 export async function saveAsNewVersion(strategyId: string, patch: Pick<Strategy, 'title' | 'content'> & { criteria?: string }) {
-  await db.transaction('rw', db.strategies, db.reviews, db.pending, async () => {
+  await db.transaction('rw', db.topics, db.strategies, db.reviews, db.pending, async () => {
     const s = await db.strategies.get(strategyId)
     if (!s) return
+    const t = await db.topics.get(s.topicId)
     const now = Date.now()
     const version = versionOf(s) + 1
     await db.reviews.add({
@@ -278,7 +335,7 @@ export async function saveAsNewVersion(strategyId: string, patch: Pick<Strategy,
     })
     await db.strategies.update(strategyId, {
       ...patch, version, score: 0, status: 'trial', statusChangedAt: now, updatedAt: now,
-      nextAskAt: now + askInterval('trial'),
+      nextAskAt: now + askInterval('trial', t),
     })
     await db.pending.delete(strategyId)
   })
@@ -297,30 +354,43 @@ export function skippedRecently(s: Strategy, reviews: Review[]) {
 
 export interface Backup {
   app: 'iteration-plan'
-  version: 1 | 2
+  version: 1 | 2 | 3
   exportedAt: number
   topics: Topic[]
   problems?: Problem[]
   strategies: Strategy[]
   reviews: Review[]
+  logs?: UsageLog[]
+  meta?: Meta[]
+  tombstones?: Tombstone[]
 }
 
 export async function exportAll(): Promise<Backup> {
-  const [topics, problems, strategies, reviews] = await Promise.all([
+  const [topics, problems, strategies, reviews, logs, meta, tombstones] = await Promise.all([
     db.topics.toArray(), db.problems.toArray(), db.strategies.toArray(), db.reviews.toArray(),
+    db.logs.toArray(), db.meta.toArray(), db.tombstones.toArray(),
   ])
-  return { app: 'iteration-plan', version: 2, exportedAt: Date.now(), topics, problems, strategies, reviews }
+  return { app: 'iteration-plan', version: 3, exportedAt: Date.now(), topics, problems, strategies, reviews, logs, meta, tombstones }
 }
 
-export async function importAll(data: Backup) {
-  if (data?.app !== 'iteration-plan') throw new Error('不是有效的备份文件')
-  await db.transaction('rw', [db.topics, db.problems, db.strategies, db.reviews, db.pending], async () => {
-    await Promise.all([db.topics.clear(), db.problems.clear(), db.strategies.clear(), db.reviews.clear(), db.pending.clear()])
+/** 用一份完整数据替换本地数据（导入备份、同步合并后写回） */
+export async function replaceAll(data: Backup) {
+  await db.transaction('rw', [db.topics, db.problems, db.strategies, db.reviews, db.logs, db.meta, db.tombstones], async () => {
+    await Promise.all([db.topics.clear(), db.problems.clear(), db.strategies.clear(), db.reviews.clear(), db.logs.clear(), db.meta.clear(), db.tombstones.clear()])
     await db.topics.bulkAdd(data.topics)
     await db.problems.bulkAdd(data.problems ?? [])
     await db.strategies.bulkAdd(data.strategies)
     await db.reviews.bulkAdd(data.reviews)
+    await db.logs.bulkAdd(data.logs ?? [])
+    await db.meta.bulkAdd(data.meta ?? [])
+    await db.tombstones.bulkAdd(data.tombstones ?? [])
   })
+}
+
+export async function importAll(data: Backup) {
+  if (data?.app !== 'iteration-plan') throw new Error('不是有效的备份文件')
+  await db.pending.clear()
+  await replaceAll(data)
 }
 
 /* ---------------- 草稿 ---------------- */
@@ -362,7 +432,7 @@ export async function publishDraft(id: string) {
 
 /** 用草稿内容覆盖原策略，并删除草稿 */
 export async function mergeDraftIntoOriginal(draftId: string) {
-  return db.transaction('rw', db.strategies, db.reviews, db.pending, async () => {
+  return db.transaction('rw', [db.strategies, db.reviews, db.logs, db.pending, db.tombstones], async () => {
     const d = await db.strategies.get(draftId)
     if (!d?.draftOf) return
     const orig = await db.strategies.get(d.draftOf)
@@ -387,16 +457,43 @@ export async function lastReviewMap() {
   return m
 }
 
-/** 多久问一次：试用中的策略 7 天，已留存的 30 天 */
-export const askInterval = (st: Status) => (st === 'kept' ? 30 : 7) * DAY
-/** 该不该主动问一问这个策略（last = 最近一次复盘时间） */
-export function askAt(s: Strategy, last?: number) {
-  return s.nextAskAt ?? (last ?? s.createdAt) + askInterval(s.status)
+export const DEFAULT_ASK_DAYS = { trial: 7, kept: 30 }
+/** 多久问一次：按主题设置，默认试用中 7 天、已留存 30 天 */
+export const askInterval = (st: Status, t?: Pick<Topic, 'askDaysTrial' | 'askDaysKept'>) =>
+  (st === 'kept' ? t?.askDaysKept ?? DEFAULT_ASK_DAYS.kept : t?.askDaysTrial ?? DEFAULT_ASK_DAYS.trial) * DAY
+/** 什么时候该主动问一问这个策略（last = 最近一次复盘时间）。没复盘过时按主题当前设置计算 */
+export function askAt(s: Strategy, last?: number, t?: Topic) {
+  return s.nextAskAt ?? (last ?? s.createdAt) + askInterval(s.status, t)
 }
-export const isDue = (s: Strategy, last?: number) =>
-  !s.isDraft && s.status !== 'eliminated' && Date.now() >= askAt(s, last)
+export const isDue = (s: Strategy, last?: number, t?: Topic) =>
+  !s.isDraft && s.status !== 'eliminated' && Date.now() >= askAt(s, last, t)
 
 /** 「过几天再问」 */
 export async function snoozeAsk(id: string, days = 3) {
-  await db.strategies.update(id, { nextAskAt: Date.now() + days * DAY })
+  await db.strategies.update(id, { nextAskAt: Date.now() + days * DAY, updatedAt: Date.now() })
+}
+
+/* ---------------- 记一笔 ---------------- */
+
+export async function addLog(strategyId: string, note: string, result?: LogResult) {
+  const l: UsageLog = { id: uid(), strategyId, note, createdAt: Date.now() }
+  if (result) l.result = result
+  await db.logs.add(l)
+  return l
+}
+
+export async function deleteLog(id: string) {
+  await db.transaction('rw', db.logs, db.tombstones, async () => {
+    await bury('logs', [id])
+    await db.logs.delete(id)
+  })
+}
+
+/* ---------------- 关于我 ---------------- */
+
+export async function getProfile() {
+  return (await db.meta.get('profile'))?.value ?? ''
+}
+export async function setProfile(value: string) {
+  await db.meta.put({ key: 'profile', value, updatedAt: Date.now() })
 }

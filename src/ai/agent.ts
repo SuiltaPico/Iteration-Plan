@@ -3,7 +3,7 @@ import { createAnthropic } from '@ai-sdk/anthropic'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import type { AiSettings } from './settings'
 import { tools } from './tools'
-import { db } from '../db'
+import { db, getProfile } from '../db'
 
 export function buildModel(s: AiSettings): LanguageModel {
   const baseURL = s.baseURL.trim().replace(/\/+$/, '')
@@ -52,6 +52,8 @@ async function systemPrompt(ctx: PageContext) {
 - 复盘结果：worked 执行了且有效 +1；failed 执行了但无效 -1；skipped 没怎么执行，不计分；note 只记录观察。分数 ≥ 留存线自动「已留存」，≤ 淘汰线自动「已淘汰」。
 - 版本：策略大改后会存为新版本，分数清零重新试用；复盘记录带版本号，评价时只看当前版本的表现。
 - 踩过的坑：淘汰的策略带 lesson（为什么不行）。
+- 使用记录：用户每次实际用了某个策略时「记一笔」（情况和结果，不计分），是复盘时最可靠的依据。
+- 关于我：跨主题提炼出的用户个人规律，见下方。
 
 ## 工作方式
 - 你可以直接用工具读写数据，改动会立即生效，不需要再向用户确认。
@@ -61,8 +63,13 @@ async function systemPrompt(ctx: PageContext) {
 - 策略正文的写法：开头一句话说明目的；「做法」用列表写清具体、可执行的步骤（何时、做什么、做多少）；需要时加「注意」。判断标准写在 criteria 字段，不要写进正文。篇幅适中，不写空话。
 - 润色或补全某个策略时，先 get_strategy 读原文，保留用户原有的意思和细节，再用 update_strategy 写回。
 - 给复盘建议时，看当前版本的复盘：多次「没怎么执行」说明太难坚持，建议简化而不是淘汰；「执行了但无效」才说明做法本身不对；对照判断标准是否达到。同一问题下已有留存的策略时，提示其他候选是否该退场。只给建议，不要擅自打分、淘汰或删除。
+- 出任何主意都要符合「关于我」里的规律（例如用户坚持不了需要固定时间的做法，就别推荐这类）。
+- 提炼「关于我」时：读各主题的踩过的坑（list_lessons）、复盘里的「没怎么执行」、使用记录和留存的策略，归纳 3~8 条跨主题的规律，每条写清依据（来自哪些策略或教训）；保留用户自己写的内容，用 update_profile 写回。
 - 打分（add_review）、改状态（set_status）、删除（delete_strategy）只在用户明确要求时执行。
 - 用中文回复。完成操作后用一两句话说明做了什么，不要复述整篇正文。
+
+## 关于我
+${(await getProfile()).trim().slice(0, 4000) || '（还没有内容）'}
 
 ## 当前页面
 ${await describeContext(ctx)}`

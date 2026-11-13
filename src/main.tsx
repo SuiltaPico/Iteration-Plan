@@ -4,6 +4,7 @@ import { HashRouter } from 'react-router-dom'
 import App from './App'
 import { convertAllPending, db } from './db'
 import { toast } from './components/Dialogs'
+import { startSync } from './sync/engine'
 import './styles.css'
 
 const root = createRoot(document.getElementById('root')!)
@@ -13,6 +14,7 @@ db.open()
     // 上次关闭页面时还没保存的修改，转成草稿
     const n = await convertAllPending().catch(() => 0)
     if (n) setTimeout(() => toast('上次未保存的修改已存为草稿'), 600)
+    startSync()
     root.render(
       <StrictMode>
         <HashRouter>
@@ -30,3 +32,10 @@ db.open()
       </div>,
     )
   })
+
+// 安装到桌面 / 离线可用（只在正式构建里注册；不支持的环境静默跳过）
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {})
+  })
+}

@@ -1,8 +1,8 @@
 import { tool } from 'ai'
 import { z } from 'zod'
 import {
-  addReview, createProblem, createStrategy, createTopic, db, deleteStrategy, OUTCOME_LABEL, outcomeOf, setStatus,
-  STATUS_LABEL, TOPIC_COLORS, updateProblem, updateTopic, versionOf,
+  addLog, addReview, createProblem, LOG_RESULT_LABEL, createStrategy, createTopic, db, deleteStrategy, OUTCOME_LABEL, outcomeOf, setStatus,
+  getProfile, setProfile, STATUS_LABEL, TOPIC_COLORS, updateProblem, updateTopic, versionOf,
 } from '../db'
 import { contentChanged } from '../bus'
 import { daysSince, excerpt, fmtDate } from '../util'
@@ -102,11 +102,13 @@ export const tools = {
         db.topics.get(s.topicId), s.problemId ? db.problems.get(s.problemId) : undefined, s.parentId ? db.strategies.get(s.parentId) : undefined,
       ])
       const reviews = await db.reviews.where('strategyId').equals(id).sortBy('createdAt')
+      const logs = await db.logs.where('strategyId').equals(id).sortBy('createdAt')
       return {
         id: s.id, title: s.title, content: s.content, criteria: s.criteria ?? '', score: s.score,
         status: s.isDraft ? 'draft' : s.status, version: versionOf(s), lesson: s.lesson ?? '',
         topicName: t?.name, problem: p?.title ?? null, derivedFrom: parent ? { id: parent.id, title: parent.title } : null,
         createdAt: fmtDate(s.createdAt), daysInUse: daysSince(s.createdAt),
+        usageLogs: logs.slice(-30).map((l) => ({ at: fmtDate(l.createdAt), result: l.result ? LOG_RESULT_LABEL[l.result] : undefined, note: l.note })),
         reviews: reviews.slice(-30).map((r) => ({
           at: fmtDate(r.createdAt), version: r.version ?? 1,
           outcome: r.event ? '开始新版本' : OUTCOME_LABEL[outcomeOf(r)], criteriaMet: r.criteriaMet, note: r.note, scoreAfter: r.scoreAfter,
@@ -123,6 +125,22 @@ export const tools = {
       const list = (topicId ? await db.strategies.where('topicId').equals(topicId).toArray() : await db.strategies.toArray())
         .filter((s) => !s.isDraft && s.status === 'eliminated')
       return list.map((s) => ({ id: s.id, topicId: s.topicId, problemId: s.problemId ?? null, title: s.title, lesson: s.lesson ?? '', excerpt: excerpt(s.content, 80) }))
+    },
+  }),
+
+  get_profile: tool({
+    description: '读取「关于我」：用户跨主题的个人规律（什么做法适合 TA、什么坚持不了）。',
+    inputSchema: z.object({}),
+    execute: async () => ({ content: await getProfile() }),
+  }),
+
+  update_profile: tool({
+    description: '整体替换「关于我」的 Markdown 内容。先 get_profile 读原文，保留用户自己写的内容，再写回完整内容。',
+    inputSchema: z.object({ content: z.string() }),
+    execute: async ({ content }) => {
+      await setProfile(content)
+      contentChanged.emit('profile')
+      return { ok: true }
     },
   }),
 
@@ -143,13 +161,15 @@ export const tools = {
   }),
 
   update_topic: tool({
-    description: '修改主题的名称、说明或阈值。',
+    description: '修改主题的名称、说明、阈值，或多久主动问一次（天）。',
     inputSchema: z.object({
       id: z.string(),
       name: z.string().min(1).optional(),
       description: z.string().optional(),
       keepAt: z.number().int().min(1).optional(),
       eliminateAt: z.number().int().max(-1).optional(),
+      askDaysTrial: z.number().int().min(1).optional().describe('试用中的策略多少天问一次'),
+      askDaysKept: z.number().int().min(1).optional().describe('已留存的策略多少天问一次'),
     }),
     execute: async ({ id, ...patch }) => {
       await mustTopic(id)
@@ -226,6 +246,20 @@ export const tools = {
     execute: async ({ id, status, note, lesson }) => {
       await mustStrategy(id)
       await setStatus(id, status, note || 'AI 助手操作', status === 'eliminated' ? lesson : undefined)
+      return { ok: true }
+    },
+  }),
+
+  add_log: tool({
+    description: '记一笔使用记录：用户某次实际用了这个策略，当时的情况和结果。不计分。用户描述了一次具体使用经历时调用。',
+    inputSchema: z.object({
+      id: z.string(),
+      note: z.string().min(1),
+      result: z.enum(['good', 'meh', 'bad']).optional().describe('good=顺利 meh=一般 bad=不理想'),
+    }),
+    execute: async ({ id, note, result }) => {
+      await mustStrategy(id)
+      await addLog(id, note, result)
       return { ok: true }
     },
   }),

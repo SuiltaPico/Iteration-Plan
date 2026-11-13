@@ -2,13 +2,14 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
-  createStrategy, CRITERIA_LABEL, db, deleteStrategy, mergeDraftIntoOriginal, OUTCOME_LABEL, outcomeOf, pendingToDraft,
+  createStrategy, CRITERIA_LABEL, db, deleteLog, deleteStrategy, mergeDraftIntoOriginal, OUTCOME_LABEL, outcomeOf, pendingToDraft,
   publishDraft, saveAsNewVersion, setStatus, skippedRecently, STATUS_LABEL, updateStrategy, versionOf,
   type Status, type Strategy,
 } from '../db'
 import { Score, ScoreMeter, StatusBadge } from './ScoreBadge'
 import { confirmDialog, toast } from './Dialogs'
 import Menu from './Menu'
+import { LogRow } from './QuickLog'
 import { contentChanged, flushEditors, openAi } from '../bus'
 import { daysSince, fmtDate, fmtRelative } from '../util'
 
@@ -35,6 +36,7 @@ function StrategyView({ s }: { s: Strategy }) {
   const parent = useLiveQuery(() => (s.parentId ? db.strategies.get(s.parentId) : undefined), [s.parentId])
   const children = useLiveQuery(() => db.strategies.where('parentId').equals(s.id).toArray(), [s.id])
   const drafts = useLiveQuery(() => db.strategies.filter((x) => x.draftOf === s.id).toArray(), [s.id])
+  const logs = useLiveQuery(() => db.logs.where('strategyId').equals(s.id).reverse().sortBy('createdAt'), [s.id])
   const isDraft = !!s.isDraft
 
   // 编辑中的文档（标题 + 判断标准 + 正文）。正式策略需要手动保存；草稿自动保存。
@@ -275,7 +277,12 @@ function StrategyView({ s }: { s: Strategy }) {
                 </div>
               </div>
               <ScoreMeter score={s.score} topic={topic} />
-              {s.status !== 'eliminated' && <Link to={`/review?s=${s.id}`} className="btn primary full center">复盘</Link>}
+              {s.status !== 'eliminated' && (
+                <div className="rail-actions">
+                  <Link to={`/log?s=${s.id}&fixed=1`} className="btn center">记一笔</Link>
+                  <Link to={`/review?s=${s.id}`} className="btn primary center">复盘</Link>
+                </div>
+              )}
             </section>
           )}
 
@@ -312,6 +319,18 @@ function StrategyView({ s }: { s: Strategy }) {
               {drafts && drafts.length > 0 && (
                 <div className="sm">未处理的草稿：{drafts.map((c, i) => <span key={c.id}>{i > 0 && '、'}<Link to={`/strategy/${c.id}`}>「{c.title}」</Link></span>)}</div>
               )}
+            </section>
+          )}
+
+          {!isDraft && logs && logs.length > 0 && (
+            <section className="rail-card">
+              <h4>使用记录</h4>
+              <div className="log-list">
+                {logs.slice(0, 6).map((l) => <LogRow key={l.id} l={l} onDelete={async () => {
+                  if (await confirmDialog('删除这条使用记录？', { ok: '删除' })) deleteLog(l.id)
+                }} />)}
+                {logs.length > 6 && <span className="muted sm">共 {logs.length} 笔</span>}
+              </div>
             </section>
           )}
 
