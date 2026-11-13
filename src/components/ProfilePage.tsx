@@ -43,7 +43,6 @@ export default function ProfilePage() {
         </div>
         <div className="head-actions">
           <button className="btn" onClick={async () => { await flush(); openAi.emit({ prompt: DISTILL, send: true }) }}>✦ 让 AI 提炼</button>
-          <button className="btn ghost" onClick={() => openAi.emit({ prompt: '检查我所有主题里已留存和试用中的策略，有没有互相冲突的', send: true })}>✦ 检查策略冲突</button>
         </div>
       </header>
       <article className="doc profile-doc">

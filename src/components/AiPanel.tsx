@@ -174,10 +174,6 @@ function ToolChip({ p }: { p: ToolPart }) {
     case 'list_problems': label = '查看问题列表'; break
     case 'list_lessons': label = '查看踩过的坑'; break
     case 'get_profile': label = '读取「关于我」'; break
-    case 'list_ideas': label = '查看想法池'; break
-    case 'add_idea': label = <>记进想法池：{p.input?.text}</>; break
-    case 'list_predictions': label = '查看预测记录'; break
-    case 'add_prediction': label = <>写下预测：{p.input?.statement}（{p.input?.confidence}%）</>; break
     case 'web_search': label = <>搜索「{p.input?.query}」{Array.isArray(p.output?.results) && <span className="muted"> · {p.output.results.length} 条结果</span>}</>; break
     case 'web_fetch': {
       let host = String(p.input?.url ?? '')
