@@ -26,6 +26,18 @@ export interface Strategy {
   createdAt: number
   updatedAt: number
   statusChangedAt: number
+  /** 草稿：不参与复盘打分，自动保存；正式发布后才开始试用 */
+  isDraft?: boolean
+  /** 草稿来源：由哪个策略的未保存修改克隆而来 */
+  draftOf?: string
+}
+
+/** 正式策略在编辑器里尚未保存的修改（离开页面后会被转成草稿策略） */
+export interface PendingEdit {
+  strategyId: string
+  title: string
+  content: string
+  updatedAt: number
 }
 
 export interface Review {
@@ -42,12 +54,16 @@ export const db = new Dexie('iteration-plan') as Dexie & {
   topics: EntityTable<Topic, 'id'>
   strategies: EntityTable<Strategy, 'id'>
   reviews: EntityTable<Review, 'id'>
+  pending: EntityTable<PendingEdit, 'strategyId'>
 }
 
 db.version(1).stores({
   topics: 'id, order, createdAt',
   strategies: 'id, topicId, status, score, updatedAt, createdAt',
   reviews: 'id, strategyId, createdAt',
+})
+db.version(2).stores({
+  pending: 'strategyId',
 })
 
 export const STATUS_LABEL: Record<Status, string> = {
@@ -73,19 +89,21 @@ export async function updateTopic(id: string, patch: Partial<Topic>) {
 }
 
 export async function deleteTopic(id: string) {
-  await db.transaction('rw', db.topics, db.strategies, db.reviews, async () => {
+  await db.transaction('rw', db.topics, db.strategies, db.reviews, db.pending, async () => {
     const ids = await db.strategies.where('topicId').equals(id).primaryKeys()
+    await db.pending.bulkDelete(ids)
     await db.reviews.where('strategyId').anyOf(ids).delete()
     await db.strategies.bulkDelete(ids)
     await db.topics.delete(id)
   })
 }
 
-export async function createStrategy(topicId: string, title = '未命名策略') {
+export async function createStrategy(topicId: string, title = '未命名策略', opts: { content?: string; isDraft?: boolean; draftOf?: string } = {}) {
   const now = Date.now()
   const s: Strategy = {
-    id: uid(), topicId, title, content: '', score: 0, status: 'trial',
+    id: uid(), topicId, title, content: opts.content ?? '', score: 0, status: 'trial',
     createdAt: now, updatedAt: now, statusChangedAt: now,
+    ...(opts.isDraft ? { isDraft: true } : {}), ...(opts.draftOf ? { draftOf: opts.draftOf } : {}),
   }
   await db.strategies.add(s)
   return s
@@ -96,7 +114,8 @@ export async function updateStrategy(id: string, patch: Partial<Strategy>) {
 }
 
 export async function deleteStrategy(id: string) {
-  await db.transaction('rw', db.strategies, db.reviews, async () => {
+  await db.transaction('rw', db.strategies, db.reviews, db.pending, async () => {
+    await db.pending.delete(id)
     await db.reviews.where('strategyId').equals(id).delete()
     await db.strategies.delete(id)
   })
@@ -162,10 +181,61 @@ export async function exportAll(): Promise<Backup> {
 
 export async function importAll(data: Backup) {
   if (data?.app !== 'iteration-plan') throw new Error('不是有效的备份文件')
-  await db.transaction('rw', db.topics, db.strategies, db.reviews, async () => {
-    await Promise.all([db.topics.clear(), db.strategies.clear(), db.reviews.clear()])
+  await db.transaction('rw', db.topics, db.strategies, db.reviews, db.pending, async () => {
+    await Promise.all([db.topics.clear(), db.strategies.clear(), db.reviews.clear(), db.pending.clear()])
     await db.topics.bulkAdd(data.topics)
     await db.strategies.bulkAdd(data.strategies)
     await db.reviews.bulkAdd(data.reviews)
   })
 }
+
+/** 把一条未保存的修改克隆成草稿策略，并清掉这条修改。返回新草稿（原策略不存在或无实际改动时返回 undefined） */
+export async function pendingToDraft(strategyId: string) {
+  return db.transaction('rw', db.strategies, db.pending, async () => {
+    const p = await db.pending.get(strategyId)
+    if (!p) return
+    await db.pending.delete(strategyId)
+    const s = await db.strategies.get(strategyId)
+    if (!s || (p.title === s.title && p.content === s.content)) return
+    return createStrategy(s.topicId, `${p.title || s.title}（草稿）`, { content: p.content, isDraft: true, draftOf: s.id })
+  })
+}
+
+/** 启动时把上次没来得及处理的未保存修改（例如直接关掉了页面）转成草稿 */
+export async function convertAllPending() {
+  const ids = await db.pending.toCollection().primaryKeys()
+  for (const id of ids) await pendingToDraft(id)
+  return ids.length
+}
+
+/** 草稿发布为正式策略（开始试用，分数从 0 起） */
+export async function publishDraft(id: string) {
+  const now = Date.now()
+  await db.strategies.update(id, { isDraft: false, draftOf: undefined, score: 0, status: 'trial', createdAt: now, statusChangedAt: now, updatedAt: now })
+}
+
+/** 用草稿内容覆盖原策略，并删除草稿 */
+export async function mergeDraftIntoOriginal(draftId: string) {
+  return db.transaction('rw', db.strategies, db.reviews, db.pending, async () => {
+    const d = await db.strategies.get(draftId)
+    if (!d?.draftOf) return
+    const orig = await db.strategies.get(d.draftOf)
+    if (!orig) return
+    await db.strategies.update(orig.id, { title: d.title.replace(/（草稿）$/, ''), content: d.content, updatedAt: Date.now() })
+    await db.pending.delete(orig.id)
+    await deleteStrategy(draftId)
+    return orig.id
+  })
+}
+
+/** 每个策略最近一次复盘时间 */
+export async function lastReviewMap() {
+  const m = new Map<string, number>()
+  await db.reviews.each((r) => { if ((m.get(r.strategyId) ?? 0) < r.createdAt) m.set(r.strategyId, r.createdAt) })
+  return m
+}
+
+/** 距离上次复盘（没有则从创建算起）超过这么多天，算「待复盘」 */
+export const REVIEW_DUE_DAYS = 7
+export const isDue = (s: Strategy, last?: number) =>
+  !s.isDraft && s.status !== 'eliminated' && Date.now() - (last ?? s.createdAt) >= REVIEW_DUE_DAYS * 86400000

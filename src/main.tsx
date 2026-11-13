@@ -2,13 +2,17 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
 import App from './App'
-import { db } from './db'
+import { convertAllPending, db } from './db'
+import { toast } from './components/Dialogs'
 import './styles.css'
 
 const root = createRoot(document.getElementById('root')!)
 
 db.open()
-  .then(() => {
+  .then(async () => {
+    // 上次关闭页面时还没保存的修改，转成草稿
+    const n = await convertAllPending().catch(() => 0)
+    if (n) setTimeout(() => toast('上次未保存的修改已存为草稿'), 600)
     root.render(
       <StrictMode>
         <HashRouter>
