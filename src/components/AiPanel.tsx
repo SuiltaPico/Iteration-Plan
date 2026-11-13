@@ -163,7 +163,7 @@ export default function AiPanel({ open, onClose }: { open: boolean; onClose: () 
 }
 
 function ToolChip({ p }: { p: ToolPart }) {
-  const sid: string | undefined = p.name.includes('strategy') || p.name === 'add_review' || p.name === 'set_status' ? (p.output?.id ?? p.input?.id) : undefined
+  const sid: string | undefined = p.name.includes('strategy') || p.name === 'add_review' || p.name === 'set_status' || p.name === 'add_log' ? (p.output?.id ?? p.input?.id) : undefined
   const live = useLiveQuery(() => (sid ? db.strategies.get(sid) : undefined), [sid])
   const title = p.input?.title ?? live?.title ?? p.output?.title ?? ''
   const pending = p.output === undefined && !p.error
@@ -173,6 +173,9 @@ function ToolChip({ p }: { p: ToolPart }) {
     case 'list_strategies': label = '查看策略列表'; break
     case 'list_problems': label = '查看问题列表'; break
     case 'list_lessons': label = '查看踩过的坑'; break
+    case 'get_profile': label = '读取「关于我」'; break
+    case 'update_profile': label = <>更新 <Link to="/me">「关于我」</Link></>; break
+    case 'add_log': label = <>记一笔「{title}」</>; break
     case 'create_problem': label = <>新建问题「{p.input?.title}」</>; break
     case 'update_problem': label = '修改问题'; break
     case 'get_strategy': label = <>读取策略{title && <>「{title}」</>}</>; break
@@ -180,7 +183,7 @@ function ToolChip({ p }: { p: ToolPart }) {
     case 'update_topic': label = '修改主题'; break
     case 'create_strategy': label = p.output?.id ? <>创建策略 <Link to={`/strategy/${p.output.id}`}>「{title}」</Link></> : <>创建策略「{title}」</>; break
     case 'update_strategy': label = <>更新策略 {sid ? <Link to={`/strategy/${sid}`}>「{title}」</Link> : null}</>; break
-    case 'add_review': label = <>复盘「{title}」：{OUTCOME_LABEL[p.input?.outcome as Outcome] ?? ''}{p.output?.statusChanged && <b> → {STATUS_LABEL[p.output.statusChanged as Status]}</b>}</>; break
+    case 'add_review': label = <>复盘「{title}」：{OUTCOME_LABEL[p.input?.outcome as Outcome] ?? ''}</>; break
     case 'set_status': label = <>「{title}」改为{STATUS_LABEL[p.input?.status as Status] ?? ''}</>; break
     case 'delete_strategy': label = <>删除策略「{p.output?.title ?? ''}」</>; break
     default: label = p.name

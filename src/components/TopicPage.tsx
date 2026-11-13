@@ -61,7 +61,6 @@ export default function TopicPage() {
         <div className="head-text">
           <h1><span className="dot lg" style={{ background: topic.color }} />{topic.name}</h1>
           {topic.description && <p className="muted">{topic.description}</p>}
-          <p className="muted sm">复盘有效 +1、无效 −1；到 +{topic.keepAt} 留存，到 {topic.eliminateAt} 淘汰</p>
         </div>
         <div className="head-actions">
           <button className="btn ghost" onClick={() => openAi.emit({ prompt: '为当前主题想几个值得试的问题和候选策略' })}>✦ AI 出主意</button>
@@ -140,6 +139,7 @@ function StrategiesView({ topic, problems, strategies, eliminatedCount, onAdd, o
               <Menu items={[
                 { label: '编辑问题', onClick: () => onEditProblem(p) },
                 { label: '让 AI 想几个候选策略', onClick: () => openAi.emit({ prompt: `为问题「${p.title}」想 2~3 个候选策略，避开踩过的坑`, send: true }) },
+                { label: '让 AI 判断留谁、淘汰谁', onClick: () => openAi.emit({ prompt: `评估问题「${p.title}」下的候选策略：根据复盘、判断标准和使用记录，判断留谁、淘汰谁，证据够的直接执行`, send: true }) },
                 {
                   label: '删除问题', danger: true, onClick: async () => {
                     if (await confirmDialog(`删除问题「${p.title}」？其下的策略会移到「未归类」，不会被删除。`, { ok: '删除问题' })) deleteProblem(p.id)
@@ -188,7 +188,7 @@ function PlaybookView({ problems, strategies }: { problems: Problem[]; strategie
     return (
       <div className="empty">
         <p>还没有留存的策略。</p>
-        <p className="muted sm">试用中的策略复盘到留存线后，会出现在这里，汇成你在这个主题上的打法。</p>
+        <p className="muted sm">你决定留存的策略会出现在这里，汇成你在这个主题上的打法。</p>
       </div>
     )
   }

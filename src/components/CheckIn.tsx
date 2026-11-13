@@ -17,8 +17,8 @@ export default function CheckIn({ strategies, topics, last }: { strategies: Stra
   const [hidden, setHidden] = useState(askedToday)
   if (hidden) return null
   const s = strategies
-    .filter((x) => isDue(x, last.get(x.id)))
-    .sort((a, b) => askAt(a, last.get(a.id)) - askAt(b, last.get(b.id)))[0]
+    .filter((x) => isDue(x, last.get(x.id), topics.get(x.topicId)))
+    .sort((a, b) => askAt(a, last.get(a.id), topics.get(a.topicId)) - askAt(b, last.get(b.id), topics.get(b.topicId)))[0]
   if (!s) return null
   const t = topics.get(s.topicId)
   const since = last.get(s.id)

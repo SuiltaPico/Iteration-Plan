@@ -2,11 +2,12 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
-  addReview, CRITERIA_LABEL, db, OUTCOME_LABEL, outcomeOf, skippedRecently, STATUS_LABEL, updateStrategy, versionOf,
+  addReview, CRITERIA_LABEL, db, OUTCOME_LABEL, outcomeOf, outcomeTally, setStatus, skippedRecently, STATUS_LABEL, versionOf,
   type CriteriaMet, type Outcome, type Status,
 } from '../db'
 import { daysSince, fmtRelative } from '../util'
 import { Score, StatusBadge } from './ScoreBadge'
+import { LogRow } from './QuickLog'
 
 const Editor = lazy(() => import('./Editor'))
 
@@ -19,6 +20,7 @@ export default function ReviewMode() {
   const fromCheckIn = params.get('from') === 'checkin'
   const [note, setNote] = useState('')
   const [met, setMet] = useState<CriteriaMet | undefined>()
+  const [decision, setDecision] = useState<Status | undefined>()
   const [busy, setBusy] = useState(false)
   const [flash, setFlash] = useState<{ text: string; tone: 'pos' | 'neg' | 'info' } | null>(null)
   const [askLesson, setAskLesson] = useState(false)
@@ -34,6 +36,7 @@ export default function ReviewMode() {
   const topic = useLiveQuery(() => (s ? db.topics.get(s.topicId) : undefined), [s?.topicId])
   const problem = useLiveQuery(() => (s?.problemId ? db.problems.get(s.problemId) : undefined), [s?.problemId])
   const reviews = useLiveQuery(() => db.reviews.where('strategyId').equals(id).reverse().sortBy('createdAt'), [id])
+  const logs = useLiveQuery(() => db.logs.where('strategyId').equals(id).reverse().sortBy('createdAt'), [id])
 
   useEffect(() => { noteRef.current?.focus() }, [s?.id])
   // 正文超出折叠高度时才显示「展开全文」
@@ -56,30 +59,36 @@ export default function ReviewMode() {
     if (!s || busy) return
     if (outcome === 'note' && !note.trim()) { noteRef.current?.focus(); return }
     setBusy(true)
-    const changed = await addReview(s.id, outcome, note.trim(), s.criteria?.trim() && outcome !== 'skipped' && outcome !== 'note' ? met : undefined)
+    await addReview(s.id, outcome, note.trim(), s.criteria?.trim() && outcome !== 'skipped' && outcome !== 'note' ? met : undefined)
     const label = outcome === 'worked' ? '+1' : outcome === 'failed' ? '−1' : outcome === 'skipped' ? '记下了：没怎么执行' : '记下了'
-    if (changed === 'eliminated') {
-      // 被淘汰时，趁热记下教训
+    const to = decision && decision !== s.status ? decision : undefined
+    if (to === 'eliminated') {
+      // 决定淘汰：趁热记下教训，记完再改状态
       setFlash(null)
       setAskLesson(true)
       setBusy(false)
       return
     }
-    setFlash(changed === 'kept'
-      ? { text: `${label}，达到留存线，已留存`, tone: 'pos' }
+    if (to) await setStatus(s.id, to, to === 'kept' ? '复盘时决定留存' : '复盘时决定继续试用')
+    setFlash(to === 'kept'
+      ? { text: `${label}，已留存`, tone: 'pos' }
+      : to === 'trial' ? { text: `${label}，转回试用`, tone: 'info' }
       : { text: label, tone: outcome === 'worked' ? 'pos' : outcome === 'failed' ? 'neg' : 'info' })
-    backTimer.current = window.setTimeout(back, changed ? 1400 : 700)
+    backTimer.current = window.setTimeout(back, to ? 1200 : 700)
   }
 
-  async function saveLesson() {
-    if (s && lesson.trim()) await updateStrategy(s.id, { lesson: lesson.trim() })
+  async function eliminate(withLesson: boolean) {
+    if (s) await setStatus(s.id, 'eliminated', '复盘时决定淘汰', withLesson && lesson.trim() ? lesson.trim() : undefined)
     back()
   }
 
   if (s === undefined) return <div className="review-shell" />
 
   const skipped = s && reviews ? skippedRecently(s, reviews) : 0
+  const tally = s && reviews ? outcomeTally(s, reviews) : { worked: 0, failed: 0, skipped: 0 }
   const history = (reviews ?? []).filter((r) => r.note || r.statusChange)
+  const lastReviewAt = (reviews ?? []).find((r) => !r.event)?.createdAt ?? 0
+  const newLogs = (logs ?? []).filter((l) => l.createdAt > lastReviewAt)
 
   return (
     <div className="review-shell">
@@ -98,15 +107,15 @@ export default function ReviewMode() {
         ) : askLesson ? (
           <section className="review-card">
             <div className="review-topic"><span className="dot" style={{ background: topic.color }} />{topic.name}{problem && <> · {problem.title}</>}</div>
-            <h1 className="review-title">「{s.title}」被淘汰了</h1>
+            <h1 className="review-title">淘汰「{s.title}」</h1>
             <div className="review-ask">
               <label htmlFor="review-lesson">为什么不行？学到了什么？</label>
               <textarea id="review-lesson" autoFocus rows={4} value={lesson} onChange={(e) => setLesson(e.target.value)}
                 placeholder="例如：需要每天固定时间，但我的作息不规律，执行不了。下次找不依赖固定时间的做法。" />
               <p className="muted sm">会记在「{topic.name}」的「踩过的坑」里，以后你和 AI 出主意时都能参考。</p>
               <div className="row-btns end">
-                <button className="btn ghost" onClick={back}>跳过</button>
-                <button className="btn primary" disabled={!lesson.trim()} onClick={saveLesson}>记下</button>
+                <button className="btn ghost" onClick={() => eliminate(false)}>不写，直接淘汰</button>
+                <button className="btn danger-fill" disabled={!lesson.trim()} onClick={() => eliminate(true)}>记下并淘汰</button>
               </div>
             </div>
           </section>
@@ -119,12 +128,10 @@ export default function ReviewMode() {
               <Score score={s.score} />
               {versionOf(s) > 1 && <span className="ver">v{versionOf(s)}</span>}
               <span className="muted sm">
-                已使用 {daysSince(s.createdAt)} 天 · {history.length ? `上次复盘 ${fmtRelative(history[0].createdAt)}` : '还没复盘过'}
+                已使用 {daysSince(s.createdAt)} 天 · {lastReviewAt ? `上次复盘 ${fmtRelative(lastReviewAt)}` : '还没复盘过'}
               </span>
-              {s.status !== 'eliminated' && (
-                <span className="review-hint">
-                  {s.status === 'trial' ? `再 +${topic.keepAt - s.score} 留存 · 再 −${s.score - topic.eliminateAt} 淘汰` : `再 −${s.score - topic.eliminateAt} 淘汰`}
-                </span>
+              {tally.worked + tally.failed + tally.skipped > 0 && (
+                <span className="review-hint">{versionOf(s) > 1 ? '这一版' : '累计'}：有效 {tally.worked} · 无效 {tally.failed} · 没执行 {tally.skipped}</span>
               )}
             </div>
 
@@ -146,6 +153,14 @@ export default function ReviewMode() {
               <div ref={contentRef} className={`review-content ${expanded ? 'open' : ''}`}>
                 <Suspense fallback={null}><Editor key={s.id} value={s.content} readOnly /></Suspense>
                 {!expanded && overflow && <button className="review-expand" onClick={() => setExpanded(true)}>展开全文</button>}
+              </div>
+            )}
+
+            {newLogs.length > 0 && (
+              <div className="review-history">
+                <div className="label">{lastReviewAt ? '上次复盘以来' : '这段时间'}记了 {newLogs.length} 笔</div>
+                {newLogs.slice(0, 8).map((l) => <LogRow key={l.id} l={l} />)}
+                {newLogs.length > 8 && <span className="muted sm">还有 {newLogs.length - 8} 笔较早的记录</span>}
               </div>
             )}
 
@@ -183,6 +198,16 @@ export default function ReviewMode() {
                 )}
                 <textarea id="review-note" ref={noteRef} rows={3} value={note} onChange={(e) => setNote(e.target.value)}
                   placeholder="写下感受、观察或想调整的地方（选「只记录」时必填）" />
+                <div className="met-row">
+                  <span className="muted sm">这次的决定：</span>
+                  {(s.status === 'kept'
+                    ? [['kept', '继续保留'], ['trial', '转回试用'], ['eliminated', '淘汰']]
+                    : [['trial', '继续试用'], ['kept', '留存'], ['eliminated', '淘汰']]
+                  ).map(([k, label]) => (
+                    <button key={k} className={`chip ${(decision ?? s.status) === k ? 'on' : ''} ${k === 'eliminated' ? 'chip-danger' : ''}`}
+                      onClick={() => setDecision(k as Status)}>{label}</button>
+                  ))}
+                </div>
                 <div className="review-actions">
                   <button className="btn pos lg" disabled={busy} onClick={() => act('worked')}>{OUTCOME_LABEL.worked} <small>+1</small></button>
                   <button className="btn neg lg" disabled={busy} onClick={() => act('failed')}>{OUTCOME_LABEL.failed} <small>−1</small></button>
