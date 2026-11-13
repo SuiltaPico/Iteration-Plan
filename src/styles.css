@@ -629,3 +629,15 @@ textarea { resize: vertical; }
 .emoji.on { background: var(--primary-soft); border-color: var(--primary); opacity: 1; filter: none; }
 .log-emoji { font-size: 15px; line-height: 1; flex: none; }
 .tl-emoji { display: inline-block; font-size: 15px; line-height: 1; margin-bottom: 2px; }
+
+/* 目标 */
+.goal { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding: 10px 14px; background: var(--primary-soft); border-radius: 10px; max-width: 760px; }
+.goal p { margin: 0; font-size: 15px; font-weight: 600; }
+.goal .link-btn { align-self: flex-start; }
+.goal-label { font-size: 11px; font-weight: 700; color: var(--primary); letter-spacing: .06em; }
+.goal-empty { align-self: flex-start; margin-top: 6px; background: none; border: 1px dashed var(--border-strong); border-radius: 8px; padding: 6px 12px; color: var(--text-2); cursor: pointer; }
+.goal-empty:hover { border-color: var(--primary); color: var(--primary); }
+.goal-history { margin: 4px 0 0; padding-left: 18px; font-size: 13px; color: var(--text-2); display: flex; flex-direction: column; gap: 4px; }
+.goal-tag { font-size: 11px; font-weight: 700; color: var(--primary); margin-right: 8px; }
+.goal-box { display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; background: var(--primary-soft); border-radius: 10px; font-weight: 600; }
+.goal p, .goal-box { color: var(--accent-ink); }

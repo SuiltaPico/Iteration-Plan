@@ -34,7 +34,7 @@ export const tools = {
       return topics.map((t) => {
         const mine = strategies.filter((s) => s.topicId === t.id)
         return {
-          id: t.id, name: t.name, description: t.description, askDaysTrial: t.askDaysTrial ?? 7, askDaysKept: t.askDaysKept ?? 30,
+          id: t.id, name: t.name, description: t.description, goal: t.goal ?? '', askDaysTrial: t.askDaysTrial ?? 7, askDaysKept: t.askDaysKept ?? 30,
           drafts: mine.filter((s) => s.isDraft).length,
           trial: mine.filter((s) => !s.isDraft && s.status === 'trial').length,
           kept: mine.filter((s) => !s.isDraft && s.status === 'kept').length,
@@ -149,23 +149,25 @@ export const tools = {
     inputSchema: z.object({
       name: z.string().min(1),
       description: z.string().optional(),
+      goal: z.string().optional().describe('用户在这个主题上想达到什么，一句话'),
       askDaysTrial: z.number().int().min(1).optional().describe('试用中的策略多少天问一次，默认 7；按领域反馈周期定'),
       askDaysKept: z.number().int().min(1).optional().describe('已留存的策略多少天问一次，默认 30'),
     }),
-    execute: async ({ name, description, askDaysTrial, askDaysKept }) => {
+    execute: async ({ name, description, goal, askDaysTrial, askDaysKept }) => {
       const used = new Set((await db.topics.toArray()).map((t) => t.color))
       const color = TOPIC_COLORS.find((c) => !used.has(c)) ?? TOPIC_COLORS[Math.floor(Math.random() * TOPIC_COLORS.length)]
-      const t = await createTopic({ name, description: description ?? '', color, askDaysTrial, askDaysKept })
+      const t = await createTopic({ name, description: description ?? '', color, askDaysTrial, askDaysKept, goal })
       return { id: t.id, name: t.name }
     },
   }),
 
   update_topic: tool({
-    description: '修改主题的名称、说明，或多久主动问一次（天）。',
+    description: '修改主题的名称、说明、目标，或多久主动问一次（天）。改目标时旧目标会自动保留在历史里。',
     inputSchema: z.object({
       id: z.string(),
       name: z.string().min(1).optional(),
       description: z.string().optional(),
+      goal: z.string().optional(),
       askDaysTrial: z.number().int().min(1).optional().describe('试用中的策略多少天问一次'),
       askDaysKept: z.number().int().min(1).optional().describe('已留存的策略多少天问一次'),
     }),

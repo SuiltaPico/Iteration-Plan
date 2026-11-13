@@ -10,6 +10,10 @@ export interface Topic {
   /** 旧版的自动留存 / 淘汰阈值，已不再使用（留存和淘汰由人或 AI 决定） */
   keepAt?: number
   eliminateAt?: number
+  /** 目标：在这个主题上想达到什么。判断策略是否有效的参照，复盘和 AI 都对照它 */
+  goal?: string
+  /** 改目标时保留的旧目标（until = 被替换的时间） */
+  goalHistory?: { text: string; until: number }[]
   /** 多久主动问一次（天）：试用中 / 已留存，默认 7 / 30 */
   askDaysTrial?: number
   askDaysKept?: number
@@ -187,7 +191,7 @@ const DAY = 86400000
 
 /* ---------------- 主题 ---------------- */
 
-export async function createTopic(input: Pick<Topic, 'name' | 'description' | 'color' | 'askDaysTrial' | 'askDaysKept'>) {
+export async function createTopic(input: Pick<Topic, 'name' | 'description' | 'color' | 'askDaysTrial' | 'askDaysKept' | 'goal'>) {
   const now = Date.now()
   const last = await db.topics.orderBy('order').last()
   const topic: Topic = { ...input, id: uid(), order: (last?.order ?? 0) + 1, createdAt: now, updatedAt: now }
@@ -196,7 +200,14 @@ export async function createTopic(input: Pick<Topic, 'name' | 'description' | 'c
 }
 
 export async function updateTopic(id: string, patch: Partial<Topic>) {
-  await db.topics.update(id, { ...patch, updatedAt: Date.now() })
+  const now = Date.now()
+  await db.topics.where('id').equals(id).modify((t) => {
+    // 目标改了：旧目标存进历史，复盘时能看到当时追的是什么
+    if (patch.goal !== undefined && (t.goal ?? '').trim() && patch.goal.trim() !== (t.goal ?? '').trim()) {
+      t.goalHistory = [...(t.goalHistory ?? []), { text: t.goal!.trim(), until: now }]
+    }
+    Object.assign(t, patch, { updatedAt: now })
+  })
 }
 
 export async function deleteTopic(id: string) {

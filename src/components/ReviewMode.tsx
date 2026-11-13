@@ -137,6 +137,10 @@ export default function ReviewMode() {
               )}
             </div>
 
+            {topic.goal?.trim() && (
+              <div className="goal-box"><span className="goal-label">{topic.name}的目标</span>{topic.goal}</div>
+            )}
+
             {s.criteria?.trim() && (
               <div className="criteria-box">
                 <div className="label">怎么判断有效</div>
@@ -190,7 +194,7 @@ export default function ReviewMode() {
               </div>
             ) : (
               <div className="review-ask">
-                <label htmlFor="review-note">这段时间用下来怎么样？</label>
+                <label htmlFor="review-note">这段时间用下来怎么样？{topic.goal?.trim() && '让你离目标更近了吗？'}</label>
                 {s.criteria?.trim() && (
                   <div className="met-row">
                     <span className="muted sm">对照判断标准：</span>

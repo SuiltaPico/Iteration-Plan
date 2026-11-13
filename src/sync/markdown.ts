@@ -28,7 +28,7 @@ export function toMarkdownFiles(d: Backup): Record<string, string> {
     const mine = d.strategies.filter((s) => s.topicId === t.id && !s.isDraft)
     const tp = problems.filter((p) => p.topicId === t.id).sort((a, b) => a.order - b.order)
     const pname = (s: Strategy) => tp.find((p) => p.id === s.problemId)?.title ?? '未归类'
-    index.push(`## ${t.name}`, '', `[打法](${encodeURI(`${dir}/打法.md`)}) · [踩过的坑](${encodeURI(`${dir}/踩过的坑.md`)})`, '')
+    index.push(`## ${t.name}`, '', ...(t.goal?.trim() ? [`目标：${t.goal.trim()}`, ''] : []), `[打法](${encodeURI(`${dir}/打法.md`)}) · [踩过的坑](${encodeURI(`${dir}/踩过的坑.md`)})`, '')
 
     const groups = [...tp.map((p) => p.title), '未归类']
     for (const g of groups) {
@@ -44,7 +44,7 @@ export function toMarkdownFiles(d: Backup): Record<string, string> {
     }
 
     const kept = mine.filter((s) => s.status === 'kept')
-    files[`${dir}/打法.md`] = [`# ${t.name} · 打法`, '', kept.length ? '' : '还没有留存的策略。',
+    files[`${dir}/打法.md`] = [`# ${t.name} · 打法`, '', ...(t.goal?.trim() ? [`> 目标：${t.goal.trim()}`, ''] : []), kept.length ? '' : '还没有留存的策略。',
       ...groups.flatMap((g) => {
         const list = kept.filter((s) => pname(s) === g)
         return list.length ? [`## ${g}`, '', ...list.flatMap((s) => [`### ${s.title}`, '', ...(s.criteria?.trim() ? [`> 判断标准：${s.criteria.trim()}`, ''] : []), s.content.trim(), ''])] : []
