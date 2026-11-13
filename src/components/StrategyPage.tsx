@@ -3,10 +3,10 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
   createStrategy, CRITERIA_LABEL, db, deleteLog, deleteStrategy, mergeDraftIntoOriginal, OUTCOME_LABEL, outcomeOf, pendingToDraft,
-  publishDraft, saveAsNewVersion, setStatus, skippedRecently, STATUS_LABEL, updateStrategy, versionOf,
+  outcomeTally, publishDraft, saveAsNewVersion, setStatus, skippedRecently, STATUS_LABEL, updateStrategy, versionOf,
   type Status, type Strategy,
 } from '../db'
-import { Score, ScoreMeter, StatusBadge } from './ScoreBadge'
+import { Score, StatusBadge } from './ScoreBadge'
 import { confirmDialog, toast } from './Dialogs'
 import Menu from './Menu'
 import { LogRow } from './QuickLog'
@@ -182,7 +182,7 @@ function StrategyView({ s }: { s: Strategy }) {
     navigate(`/topic/${tid}`)
   }
   async function manual(to: Status) {
-    const msg = s.status === 'eliminated' ? '恢复试用（分数归零）' : to === 'kept' ? '手动留存' : '转回试用'
+    const msg = s.status === 'eliminated' ? '恢复试用' : to === 'kept' ? '决定留存' : '转回试用'
     await setStatus(s.id, to, msg)
     toast(msg)
   }
@@ -228,10 +228,11 @@ function StrategyView({ s }: { s: Strategy }) {
           <button className="btn ghost" onClick={() => openAi.emit({ prompt: aiPrompt, send: true })}>✦ AI 帮写</button>
           <Menu items={[
             { label: '移动到…', onClick: () => setMoving(true) },
-            { label: '直接留存', onClick: () => manual('kept'), hidden: isDraft || s.status !== 'trial' },
+            { label: '让 AI 判断去留', onClick: () => openAi.emit({ prompt: '根据这个策略的复盘、判断标准和使用记录，判断它该留存、继续试用还是淘汰，证据够就直接执行', send: true }), hidden: isDraft },
+            { label: '留存', onClick: () => manual('kept'), hidden: isDraft || s.status !== 'trial' },
             { label: '转回试用', onClick: () => manual('trial'), hidden: isDraft || s.status !== 'kept' },
-            { label: '恢复试用（分数归零）', onClick: () => manual('trial'), hidden: isDraft || s.status !== 'eliminated' },
-            { label: '手动淘汰…', onClick: () => setEliminating(true), hidden: isDraft || s.status === 'eliminated', danger: true },
+            { label: '恢复试用', onClick: () => manual('trial'), hidden: isDraft || s.status !== 'eliminated' },
+            { label: '淘汰…', onClick: () => setEliminating(true), hidden: isDraft || s.status === 'eliminated', danger: true },
             { label: isDraft ? '删除草稿' : '删除策略', onClick: remove, danger: true },
           ]} />
         </div>
@@ -276,7 +277,9 @@ function StrategyView({ s }: { s: Strategy }) {
                   <div className="muted sm">{reviews?.some((r) => !r.event) ? `上次复盘 ${fmtRelative(reviews.find((r) => !r.event)!.createdAt)}` : '还没复盘过'}</div>
                 </div>
               </div>
-              <ScoreMeter score={s.score} topic={topic} />
+              {reviews && (() => { const t = outcomeTally(s, reviews); return t.worked + t.failed + t.skipped > 0 && (
+                <div className="tally-line">{versionOf(s) > 1 ? '这一版' : '累计'}：<b className="pos">有效 {t.worked}</b> · <b className="neg">无效 {t.failed}</b> · <b className="warn">没执行 {t.skipped}</b></div>
+              ) })()}
               {s.status !== 'eliminated' && (
                 <div className="rail-actions">
                   <Link to={`/log?s=${s.id}&fixed=1`} className="btn center">记一笔</Link>
@@ -370,7 +373,7 @@ function StrategyView({ s }: { s: Strategy }) {
             <LessonEditor initial="" okLabel="淘汰" danger onDone={async (v) => {
               setEliminating(false)
               if (v === undefined) return
-              await setStatus(s.id, 'eliminated', '手动淘汰', v || undefined)
+              await setStatus(s.id, 'eliminated', '决定淘汰', v || undefined)
               toast('已淘汰')
             }} />
           </div>

@@ -42,7 +42,7 @@ export default function Overview() {
       <div className="page">
         <div className="hero-empty">
           <h1>用迭代的方式管理你的策略</h1>
-          <p>建一个<b>主题</b>（比如「早起」「阅读」「投资」），在里面写下<b>策略</b>，用一段时间后复盘打分：<br />好用就 +1，分数到留存线自动<b>留存</b>；不好用就 −1，到淘汰线自动<b>淘汰</b>。</p>
+          <p>建一个<b>主题</b>（比如「早起」「阅读」「投资」），在里面写下<b>策略</b>，用一段时间后复盘：执行了有效 +1、无效 −1。<br />分数只是记录，留下还是<b>淘汰</b>由你决定（也可以让 AI 帮你判断）。</p>
           <div className="hero-actions">
             <button className="btn primary lg" onClick={() => setCreating(true)}>创建第一个主题</button>
             <button className="btn lg" onClick={() => openAi.emit({ prompt: '我想改进：' })}>✦ 让 AI 帮我起步</button>

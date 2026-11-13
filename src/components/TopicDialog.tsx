@@ -10,17 +10,15 @@ export default function TopicDialog({ topic, onClose }: Props) {
   const [name, setName] = useState(topic?.name ?? '')
   const [description, setDescription] = useState(topic?.description ?? '')
   const [color, setColor] = useState(topic?.color ?? TOPIC_COLORS[Math.floor(Math.random() * TOPIC_COLORS.length)])
-  const [keepAt, setKeepAt] = useState(topic?.keepAt ?? 3)
-  const [eliminateAt, setEliminateAt] = useState(topic?.eliminateAt ?? -3)
   const [askTrial, setAskTrial] = useState(topic?.askDaysTrial ?? DEFAULT_ASK_DAYS.trial)
   const [askKept, setAskKept] = useState(topic?.askDaysKept ?? DEFAULT_ASK_DAYS.kept)
 
-  const valid = name.trim() && keepAt > 0 && eliminateAt < 0 && askTrial >= 1 && askKept >= 1
+  const valid = name.trim() && askTrial >= 1 && askKept >= 1
 
   async function save(e: React.FormEvent) {
     e.preventDefault()
     if (!valid) return
-    const data = { name: name.trim(), description: description.trim(), color, keepAt, eliminateAt, askDaysTrial: askTrial, askDaysKept: askKept }
+    const data = { name: name.trim(), description: description.trim(), color, askDaysTrial: askTrial, askDaysKept: askKept }
     if (topic) {
       await updateTopic(topic.id, data)
       onClose()
@@ -48,16 +46,6 @@ export default function TopicDialog({ topic, onClose }: Props) {
               <button type="button" key={c} className={`swatch ${c === color ? 'on' : ''}`} style={{ background: c }} onClick={() => setColor(c)} aria-label={c} />
             ))}
           </div>
-        </div>
-        <div className="row2">
-          <label className="field">
-            <span>留存线（分数 ≥ 此值自动留存）</span>
-            <input type="number" min={1} value={keepAt} onChange={(e) => setKeepAt(Number(e.target.value))} />
-          </label>
-          <label className="field">
-            <span>淘汰线（分数 ≤ 此值自动淘汰）</span>
-            <input type="number" max={-1} value={eliminateAt} onChange={(e) => setEliminateAt(Number(e.target.value))} />
-          </label>
         </div>
         <div className="field">
           <span>多久问一次「你觉得它怎么样」</span>

@@ -7,10 +7,9 @@ export interface Topic {
   name: string
   description: string
   color: string
-  /** 分数 ≥ keepAt 时，试用中的策略自动转为「已留存」 */
-  keepAt: number
-  /** 分数 ≤ eliminateAt 时，策略自动「淘汰」 */
-  eliminateAt: number
+  /** 旧版的自动留存 / 淘汰阈值，已不再使用（留存和淘汰由人或 AI 决定） */
+  keepAt?: number
+  eliminateAt?: number
   /** 多久主动问一次（天）：试用中 / 已留存，默认 7 / 30 */
   askDaysTrial?: number
   askDaysKept?: number
@@ -173,7 +172,7 @@ const DAY = 86400000
 
 /* ---------------- 主题 ---------------- */
 
-export async function createTopic(input: Pick<Topic, 'name' | 'description' | 'color' | 'keepAt' | 'eliminateAt'>) {
+export async function createTopic(input: Pick<Topic, 'name' | 'description' | 'color' | 'askDaysTrial' | 'askDaysKept'>) {
   const now = Date.now()
   const last = await db.topics.orderBy('order').last()
   const topic: Topic = { ...input, id: uid(), order: (last?.order ?? 0) + 1, createdAt: now, updatedAt: now }
@@ -270,54 +269,51 @@ export async function deleteStrategy(id: string) {
   })
 }
 
-function nextStatus(cur: Status, score: number, t: Topic): Status {
-  if (cur !== 'eliminated' && score <= t.eliminateAt) return 'eliminated'
-  if (cur === 'trial' && score >= t.keepAt) return 'kept'
-  return cur
-}
-
-/** 复盘：按结果计分（有效 +1、无效 −1、没执行和只记录不计分），并按主题阈值自动转换状态 */
+/** 复盘：只计分（有效 +1、无效 −1，没执行和只记录不计分），不会改变状态。留存和淘汰由人或 AI 决定 */
 export async function addReview(strategyId: string, outcome: Outcome, note: string, criteriaMet?: CriteriaMet) {
-  return db.transaction('rw', db.topics, db.strategies, db.reviews, async () => {
+  await db.transaction('rw', db.topics, db.strategies, db.reviews, async () => {
     const s = await db.strategies.get(strategyId)
     if (!s) return
     const t = await db.topics.get(s.topicId)
-    if (!t) return
     const delta = OUTCOME_DELTA[outcome]
     const score = s.score + delta
-    const status = nextStatus(s.status, score, t)
     const now = Date.now()
     const r: Review = {
       id: uid(), strategyId, delta, note, scoreAfter: score, createdAt: now, outcome, version: versionOf(s),
     }
     if (criteriaMet) r.criteriaMet = criteriaMet
-    if (status !== s.status) r.statusChange = { from: s.status, to: status }
     await db.reviews.add(r)
-    await db.strategies.update(strategyId, {
-      score, status, updatedAt: now, nextAskAt: now + askInterval(status, t),
-      ...(status !== s.status ? { statusChangedAt: now } : {}),
-    })
-    return status !== s.status ? status : undefined
+    await db.strategies.update(strategyId, { score, updatedAt: now, nextAskAt: now + askInterval(s.status, t) })
   })
 }
 
-/** 手动改变状态（淘汰 / 恢复试用 / 直接留存）；淘汰时可以顺便记下教训 */
+/** 决定状态（留存 / 淘汰 / 继续或恢复试用）；分数不变。淘汰时可以顺便记下教训 */
 export async function setStatus(strategyId: string, to: Status, note: string, lesson?: string) {
-  await db.transaction('rw', db.strategies, db.reviews, async () => {
+  await db.transaction('rw', db.topics, db.strategies, db.reviews, async () => {
     const s = await db.strategies.get(strategyId)
     if (!s || s.status === to) return
-    // 从淘汰恢复时分数归零，重新开始试用
-    const score = s.status === 'eliminated' && to !== 'eliminated' ? 0 : s.score
+    const t = await db.topics.get(s.topicId)
     const now = Date.now()
     await db.reviews.add({
-      id: uid(), strategyId, delta: score - s.score, note, scoreAfter: score, createdAt: now,
+      id: uid(), strategyId, delta: 0, note, scoreAfter: s.score, createdAt: now,
       statusChange: { from: s.status, to }, outcome: 'note', version: versionOf(s),
     })
     await db.strategies.update(strategyId, {
-      status: to, score, updatedAt: now, statusChangedAt: now,
+      status: to, updatedAt: now, statusChangedAt: now, nextAskAt: now + askInterval(to, t),
       ...(lesson !== undefined ? { lesson } : {}),
     })
   })
+}
+
+/** 当前版本的复盘结果统计，供决定留存或淘汰时参考 */
+export function outcomeTally(s: Strategy, reviews: Review[]) {
+  const t = { worked: 0, failed: 0, skipped: 0 }
+  for (const r of reviews) {
+    if (r.event || (r.version ?? 1) !== versionOf(s)) continue
+    const o = outcomeOf(r)
+    if (o !== 'note') t[o]++
+  }
+  return t
 }
 
 /** 保存为新版本：内容更新，版本 +1，分数清零重新试用（之前的复盘记录保留，标着旧版本号） */

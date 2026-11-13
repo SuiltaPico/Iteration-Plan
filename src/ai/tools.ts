@@ -27,14 +27,14 @@ async function checkProblem(problemId: string | undefined, topicId: string) {
 
 export const tools = {
   list_topics: tool({
-    description: '列出所有主题，包含留存线/淘汰线和各状态策略数量。',
+    description: '列出所有主题，包含各状态策略数量和多久问一次。',
     inputSchema: z.object({}),
     execute: async () => {
       const [topics, strategies] = await Promise.all([db.topics.orderBy('order').toArray(), db.strategies.toArray()])
       return topics.map((t) => {
         const mine = strategies.filter((s) => s.topicId === t.id)
         return {
-          id: t.id, name: t.name, description: t.description, keepAt: t.keepAt, eliminateAt: t.eliminateAt,
+          id: t.id, name: t.name, description: t.description, askDaysTrial: t.askDaysTrial ?? 7, askDaysKept: t.askDaysKept ?? 30,
           drafts: mine.filter((s) => s.isDraft).length,
           trial: mine.filter((s) => !s.isDraft && s.status === 'trial').length,
           kept: mine.filter((s) => !s.isDraft && s.status === 'kept').length,
@@ -149,25 +149,23 @@ export const tools = {
     inputSchema: z.object({
       name: z.string().min(1),
       description: z.string().optional(),
-      keepAt: z.number().int().min(1).optional().describe('留存线，默认 3'),
-      eliminateAt: z.number().int().max(-1).optional().describe('淘汰线，默认 -3'),
+      askDaysTrial: z.number().int().min(1).optional().describe('试用中的策略多少天问一次，默认 7；按领域反馈周期定'),
+      askDaysKept: z.number().int().min(1).optional().describe('已留存的策略多少天问一次，默认 30'),
     }),
-    execute: async ({ name, description, keepAt, eliminateAt }) => {
+    execute: async ({ name, description, askDaysTrial, askDaysKept }) => {
       const used = new Set((await db.topics.toArray()).map((t) => t.color))
       const color = TOPIC_COLORS.find((c) => !used.has(c)) ?? TOPIC_COLORS[Math.floor(Math.random() * TOPIC_COLORS.length)]
-      const t = await createTopic({ name, description: description ?? '', color, keepAt: keepAt ?? 3, eliminateAt: eliminateAt ?? -3 })
+      const t = await createTopic({ name, description: description ?? '', color, askDaysTrial, askDaysKept })
       return { id: t.id, name: t.name }
     },
   }),
 
   update_topic: tool({
-    description: '修改主题的名称、说明、阈值，或多久主动问一次（天）。',
+    description: '修改主题的名称、说明，或多久主动问一次（天）。',
     inputSchema: z.object({
       id: z.string(),
       name: z.string().min(1).optional(),
       description: z.string().optional(),
-      keepAt: z.number().int().min(1).optional(),
-      eliminateAt: z.number().int().max(-1).optional(),
       askDaysTrial: z.number().int().min(1).optional().describe('试用中的策略多少天问一次'),
       askDaysKept: z.number().int().min(1).optional().describe('已留存的策略多少天问一次'),
     }),
@@ -225,7 +223,7 @@ export const tools = {
   }),
 
   add_review: tool({
-    description: '给策略记一次复盘：worked=执行了且有效(+1)，failed=执行了但无效(-1)，skipped=没怎么执行(不计分)，note=只记录观察。达到主题阈值会自动留存或淘汰。只在用户明确要求时调用。',
+    description: '给策略记一次复盘：worked=执行了且有效(+1)，failed=执行了但无效(-1)，skipped=没怎么执行(不计分)，note=只记录观察。只计分，不改变状态。只在用户明确要求时调用。',
     inputSchema: z.object({
       id: z.string(),
       outcome: z.enum(['worked', 'failed', 'skipped', 'note']),
@@ -234,18 +232,18 @@ export const tools = {
     }),
     execute: async ({ id, outcome, note, criteriaMet }) => {
       await mustStrategy(id)
-      const changed = await addReview(id, outcome, note, criteriaMet)
+      await addReview(id, outcome, note, criteriaMet)
       const s = await db.strategies.get(id)
-      return { score: s?.score, status: s?.status, statusChanged: changed ?? null }
+      return { score: s?.score, status: s?.status }
     },
   }),
 
   set_status: tool({
-    description: '手动改变策略状态（淘汰、留存、恢复试用）。从淘汰恢复时分数归零。淘汰时尽量带上 lesson（为什么不行）。只在用户明确要求时调用。',
+    description: '决定策略的状态：kept 留存、eliminated 淘汰、trial 继续/恢复试用。分数不变。用户要求改状态，或请你判断去留时调用；note 写明决定的依据，淘汰时 lesson 写为什么不行。',
     inputSchema: z.object({ id: z.string(), status: statusEnum, note: z.string().optional(), lesson: z.string().optional() }),
     execute: async ({ id, status, note, lesson }) => {
       await mustStrategy(id)
-      await setStatus(id, status, note || 'AI 助手操作', status === 'eliminated' ? lesson : undefined)
+      await setStatus(id, status, note ? `AI 判断：${note}` : 'AI 助手操作', status === 'eliminated' ? lesson : undefined)
       return { ok: true }
     },
   }),

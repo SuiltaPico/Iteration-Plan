@@ -612,3 +612,9 @@ textarea { resize: vertical; }
 .sync-status.s-error .sync-dot { background: var(--neg); }
 .modal code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
 .modal small a { color: var(--primary); }
+.chip.chip-danger.on { background: var(--neg); border-color: var(--neg); }
+.tally-line { font-size: 12px; color: var(--text-2); }
+.tally-line b { font-weight: 600; }
+.tally-line .pos { color: var(--pos); }
+.tally-line .neg { color: var(--neg); }
+.tally-line .warn { color: var(--warn); }
