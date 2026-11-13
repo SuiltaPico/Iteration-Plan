@@ -30,6 +30,8 @@ export interface Strategy {
   isDraft?: boolean
   /** 草稿来源：由哪个策略的未保存修改克隆而来 */
   draftOf?: string
+  /** 下次主动「问一问」的时间；复盘或「过几天再问」时更新 */
+  nextAskAt?: number
 }
 
 /** 正式策略在编辑器里尚未保存的修改（离开页面后会被转成草稿策略） */
@@ -142,7 +144,7 @@ export async function addReview(strategyId: string, delta: number, note: string)
       statusChange: status !== s.status ? { from: s.status, to: status } : undefined,
     })
     await db.strategies.update(strategyId, {
-      score, status, updatedAt: now,
+      score, status, updatedAt: now, nextAskAt: now + askInterval(status),
       ...(status !== s.status ? { statusChangedAt: now } : {}),
     })
     return status !== s.status ? status : undefined
@@ -235,7 +237,17 @@ export async function lastReviewMap() {
   return m
 }
 
-/** 距离上次复盘（没有则从创建算起）超过这么多天，算「待复盘」 */
-export const REVIEW_DUE_DAYS = 7
+const DAY = 86400000
+/** 多久问一次：试用中的策略 7 天，已留存的 30 天 */
+export const askInterval = (st: Status) => (st === 'kept' ? 30 : 7) * DAY
+/** 该不该主动问一问这个策略（last = 最近一次复盘时间） */
+export function askAt(s: Strategy, last?: number) {
+  return s.nextAskAt ?? (last ?? s.createdAt) + askInterval(s.status)
+}
 export const isDue = (s: Strategy, last?: number) =>
-  !s.isDraft && s.status !== 'eliminated' && Date.now() - (last ?? s.createdAt) >= REVIEW_DUE_DAYS * 86400000
+  !s.isDraft && s.status !== 'eliminated' && Date.now() >= askAt(s, last)
+
+/** 「过几天再问」 */
+export async function snoozeAsk(id: string, days = 3) {
+  await db.strategies.update(id, { nextAskAt: Date.now() + days * DAY })
+}

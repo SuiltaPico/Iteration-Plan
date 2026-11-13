@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import type { Strategy, Topic } from '../db'
-import { isDue, lastReviewMap } from '../db'
+import { lastReviewMap } from '../db'
 import { daysSince, excerpt, fmtRelative } from '../util'
 import { Score, StatusBadge } from './ScoreBadge'
 
@@ -11,7 +11,6 @@ export function useLastReviews() {
 }
 
 export default function StrategyCard({ s, topic, showTopic, last }: { s: Strategy; topic?: Topic; showTopic?: boolean; last?: number }) {
-  const due = isDue(s, last)
   const reviewable = !s.isDraft && s.status !== 'eliminated'
   return (
     <article className={`card strategy-card st-${s.isDraft ? 'draft' : s.status}`}>
@@ -33,9 +32,7 @@ export default function StrategyCard({ s, topic, showTopic, last }: { s: Strateg
             : last ? `上次复盘 ${fmtRelative(last)}` : `已使用 ${daysSince(s.createdAt)} 天 · 未复盘`}
         </span>
         {reviewable && (
-          <Link to={`/review?s=${s.id}`} className={`review-btn ${due ? 'due' : ''}`} title={due ? '已经一段时间没复盘了' : '复盘这个策略'}>
-            {due && <span className="due-dot" />}复盘
-          </Link>
+          <Link to={`/review?s=${s.id}`} className="review-btn" title="复盘这个策略">复盘</Link>
         )}
       </div>
     </article>

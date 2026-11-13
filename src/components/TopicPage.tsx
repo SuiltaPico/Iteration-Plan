@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { createStrategy, db, deleteTopic, STATUS_LABEL, type Status, type Strategy } from '../db'
 import StrategyCard, { useLastReviews } from './StrategyCard'
@@ -42,7 +42,6 @@ export default function TopicPage() {
 
   const tabs: Filter[] = ['active', 'trial', 'kept', 'eliminated', 'draft', 'all']
   const tabLabel = (f: Filter) => f === 'active' ? '在用' : f === 'all' ? '全部' : f === 'draft' ? '草稿' : STATUS_LABEL[f]
-  const reviewable = strategies.some((s) => !s.isDraft && s.status !== 'eliminated')
 
   return (
     <div className="page">
@@ -54,7 +53,6 @@ export default function TopicPage() {
         </div>
         <div className="head-actions">
           <button className="btn ghost" onClick={() => openAi.emit({ prompt: '为当前主题再想 3 个新策略' })}>✦ AI 写策略</button>
-          {reviewable && <Link className="btn" to={`/review?topic=${id}`}>复盘这个主题</Link>}
           <button className="btn primary" onClick={add}>＋ 新建策略</button>
           <Menu items={[
             { label: '编辑主题', onClick: () => setEditing(true) },

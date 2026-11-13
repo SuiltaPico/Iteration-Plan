@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db, isDue, STATUS_LABEL, type Strategy } from '../db'
+import { db, STATUS_LABEL, type Strategy } from '../db'
+import CheckIn from './CheckIn'
 import StrategyCard, { useLastReviews } from './StrategyCard'
 import TopicDialog from './TopicDialog'
 import { fmtRelative } from '../util'
@@ -31,7 +32,6 @@ export default function Overview() {
   const real = strategies.filter((s) => !s.isDraft)
   const stat = { trial: 0, kept: 0, eliminated: 0 }
   real.forEach((s) => stat[s.status]++)
-  const due = real.filter((s) => isDue(s, last.get(s.id))).length
   const topicMap = new Map(topics.map((t) => [t.id, t]))
   const sMap = new Map(strategies.map((s) => [s.id, s]))
 
@@ -73,15 +73,7 @@ export default function Overview() {
         </div>
       </header>
 
-      {!hits && real.some((s) => s.status !== 'eliminated') && (
-        <div className={`review-banner ${due ? 'due' : ''}`}>
-          <div>
-            <b>{due ? `${due} 个策略该复盘了` : '最近都复盘过了'}</b>
-            <span className="muted sm">{due ? '超过 7 天没有复盘。每次只看一个，很快就能过完。' : '想再过一遍也可以随时开始。'}</span>
-          </div>
-          <Link className={`btn ${due ? 'primary' : ''}`} to={due ? '/review?due=1' : '/review'}>开始复盘</Link>
-        </div>
-      )}
+      {!hits && <CheckIn strategies={real} topics={topicMap} last={last} />}
 
       {hits ? (
         <section>

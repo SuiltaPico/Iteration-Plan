@@ -360,18 +360,9 @@ textarea { resize: vertical; }
   border: 1px solid var(--border); color: var(--text-2); font-weight: 600; white-space: nowrap;
 }
 .review-btn:hover { border-color: var(--primary); color: var(--primary); }
-.review-btn.due { background: var(--primary-soft); border-color: transparent; color: var(--primary); }
-.due-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--primary); }
 .badge-draft { background: var(--surface-2); color: var(--text-2); border: 1px dashed var(--border-strong); }
 
 /* 总览：复盘提示条 */
-.review-banner {
-  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
-  padding: 14px 18px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); margin-bottom: 26px;
-}
-.review-banner > div { display: flex; flex-direction: column; gap: 2px; }
-.review-banner.due { background: var(--primary-soft); border-color: transparent; }
-.review-banner.due b { color: var(--accent-ink); }
 .board .grid { margin-top: 12px; }
 .head-actions .search { width: 240px; max-width: 100%; }
 @media (max-width: 760px) { .head-actions .search { width: 100%; flex: 1 1 100%; } }
@@ -440,9 +431,6 @@ textarea { resize: vertical; }
 }
 .review-bar .btn { justify-self: start; }
 .review-scope { font-weight: 600; font-size: 14px; }
-.review-count { justify-self: end; font-variant-numeric: tabular-nums; color: var(--text-2); font-size: 13px; }
-.review-progress { grid-column: 1 / -1; height: 3px; background: var(--border); border-radius: 99px; overflow: hidden; }
-.review-progress > div { height: 100%; background: var(--primary); transition: width .3s ease; }
 .review-main { flex: 1; display: flex; justify-content: center; padding: 28px 16px 64px; }
 .review-card { width: 100%; max-width: 680px; display: flex; flex-direction: column; gap: 18px; position: relative; animation: rise .25s ease-out; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
@@ -465,8 +453,6 @@ textarea { resize: vertical; }
 .review-ask { display: flex; flex-direction: column; gap: 12px; padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
 .review-ask textarea { font-size: 15px; }
 .review-actions { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; }
-.review-skip { display: flex; justify-content: space-between; }
-.review-skip .link-btn { font-size: 13px; }
 .review-flash {
   position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); padding: 14px 22px; border-radius: 14px;
   font-size: 18px; font-weight: 700; box-shadow: var(--shadow-lg); background: var(--surface); animation: rise .2s ease-out;
@@ -477,13 +463,6 @@ textarea { resize: vertical; }
 .review-done { max-width: 480px; margin-top: 10vh; display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }
 .review-done h1 { font-size: 26px; }
 .review-done p { margin: 0; }
-.tally { display: flex; gap: 28px; }
-.tally div { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.tally b { font-size: 30px; font-variant-numeric: tabular-nums; }
-.tally b.pos { color: var(--pos); }
-.tally b.neg { color: var(--neg); }
-.tally span { font-size: 12px; color: var(--text-2); }
-.row-btns.center { justify-content: center; }
 
 @container main (max-width: 960px) {
   .strategy-layout { grid-template-columns: minmax(0, 1fr); }
@@ -502,3 +481,14 @@ textarea { resize: vertical; }
   .review-actions .btn:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
   .stat-row { gap: 12px; }
 }
+
+/* 问一问 */
+.checkin {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  padding: 16px 20px; margin-bottom: 26px; border-radius: 14px; background: var(--primary-soft);
+}
+.checkin-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 280px; }
+.checkin-eyebrow { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+.checkin p { margin: 0; font-size: 15px; font-weight: 600; color: var(--accent-ink); }
+.checkin-actions { display: flex; gap: 8px; }
+.review-bar { grid-template-columns: 1fr auto 1fr; }
