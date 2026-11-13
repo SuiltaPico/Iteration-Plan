@@ -28,7 +28,10 @@ async function describeContext(ctx: PageContext) {
     const s = await db.strategies.get(ctx.strategyId)
     if (s) {
       const t = await db.topics.get(s.topicId)
-      return `用户正在查看策略「${s.title}」(id: ${s.id})，所属主题「${t?.name}」(id: ${s.topicId})。用户说「这个策略」「当前策略」时指它。`
+      const p = await db.pending.get(s.id)
+      const draftNote = s.isDraft ? '这是一份草稿（不参与打分）。' : ''
+      const pendingNote = p ? `\n用户在编辑器里有尚未保存的修改，用户说的「这个策略」以编辑器里的版本为准；如果你改写正文，请以它为基础：\n标题：${p.title}\n正文：\n${p.content}` : ''
+      return `用户正在查看策略「${s.title}」(id: ${s.id})，所属主题「${t?.name}」(id: ${s.topicId})。${draftNote}用户说「这个策略」「当前策略」时指它。${pendingNote}`
     }
   }
   if (ctx.topicId) {
@@ -44,7 +47,7 @@ async function systemPrompt(ctx: PageContext) {
 
 ## 应用模型
 - 主题：一个想改进的领域（如早起、阅读、投资）。每个主题有留存线（默认 +3）和淘汰线（默认 -3）。
-- 策略：主题下一条具体可执行的做法，正文是 Markdown。新策略状态为「试用中」，分数 0。
+- 策略：主题下一条具体可执行的做法，正文是 Markdown。新策略状态为「试用中」，分数 0。status 为 draft 的是草稿，不参与打分。
 - 复盘：用户用一段时间后打分，+1 好用、-1 不好用、0 只记观察。分数 ≥ 留存线自动「已留存」，≤ 淘汰线自动「已淘汰」。
 
 ## 工作方式

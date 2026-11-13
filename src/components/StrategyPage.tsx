@@ -1,11 +1,15 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { addReview, db, deleteStrategy, setStatus, STATUS_LABEL, updateStrategy, type Strategy } from '../db'
+import {
+  createStrategy, db, deleteStrategy, mergeDraftIntoOriginal, pendingToDraft, publishDraft, setStatus,
+  STATUS_LABEL, updateStrategy, type Status, type Strategy,
+} from '../db'
 import { Score, ScoreMeter, StatusBadge } from './ScoreBadge'
-import { confirmDialog } from './Dialogs'
+import { confirmDialog, toast } from './Dialogs'
+import Menu from './Menu'
 import { contentChanged, flushEditors, openAi } from '../bus'
-import { daysSince, fmtDate } from '../util'
+import { daysSince, fmtDate, fmtRelative } from '../util'
 
 const Editor = lazy(() => import('./Editor'))
 
@@ -22,165 +26,262 @@ function StrategyView({ s }: { s: Strategy }) {
   const topic = useLiveQuery(() => db.topics.get(s.topicId), [s.topicId])
   const topics = useLiveQuery(() => db.topics.orderBy('order').toArray(), [])
   const reviews = useLiveQuery(() => db.reviews.where('strategyId').equals(s.id).reverse().sortBy('createdAt'), [s.id])
+  const original = useLiveQuery(() => (s.draftOf ? db.strategies.get(s.draftOf) : undefined), [s.draftOf])
+  const isDraft = !!s.isDraft
+
+  // 编辑中的文档（标题 + 正文）。正式策略需要手动保存；草稿自动保存。
   const [title, setTitle] = useState(s.title)
-  const [note, setNote] = useState('')
-  const [saved, setSaved] = useState(true)
-  const [flash, setFlash] = useState('')
-  const timer = useRef<number | undefined>(undefined)
-  const pending = useRef<string | null>(null)
-
-  // 内容自动保存（防抖）
-  const flush = () => {
-    if (pending.current !== null) {
-      updateStrategy(s.id, { content: pending.current })
-      pending.current = null
-      setSaved(true)
-    }
-  }
-  const onContent = (md: string) => {
-    pending.current = md
-    setSaved(false)
-    clearTimeout(timer.current)
-    timer.current = window.setTimeout(flush, 600)
-  }
-  useEffect(() => () => { clearTimeout(timer.current); flush() }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // AI 运行前先保存未落盘的内容；AI 改写正文后重新载入编辑器
   const [seed, setSeed] = useState({ content: s.content, rev: 0 })
-  useEffect(() => flushEditors.on(() => { clearTimeout(timer.current); flush() }), []) // eslint-disable-line react-hooks/exhaustive-deps
+  const doc = useRef({ title: s.title, content: s.content })
+  const [dirty, setDirty] = useState(false)
+  const [moving, setMoving] = useState(false)
+  const timer = useRef<number | undefined>(undefined)
+  const skipDraftOnLeave = useRef(false)
+  const sRef = useRef(s)
+  sRef.current = s
+
+  const isDirty = () => doc.current.title !== sRef.current.title || doc.current.content !== sRef.current.content
+
+  /** 落盘：草稿直接保存；正式策略写入「未保存修改」暂存 */
+  const persist = useCallback(async () => {
+    clearTimeout(timer.current)
+    const cur = sRef.current
+    if (cur.isDraft) {
+      if (isDirty()) await updateStrategy(cur.id, { title: doc.current.title, content: doc.current.content })
+    } else if (isDirty()) {
+      await db.pending.put({ strategyId: cur.id, ...doc.current, updatedAt: Date.now() })
+    } else {
+      await db.pending.delete(cur.id)
+    }
+  }, [])
+
+  const onEdit = () => {
+    setDirty(isDirty())
+    clearTimeout(timer.current)
+    timer.current = window.setTimeout(persist, isDraft ? 600 : 400)
+  }
+  const onContent = (md: string) => { doc.current.content = md; onEdit() }
+  const onTitle = (t: string) => { setTitle(t); doc.current.title = t; onEdit() }
+
+  // 离开页面：正式策略的未保存修改另存为草稿
+  useEffect(() => () => {
+    clearTimeout(timer.current)
+    const cur = sRef.current
+    if (skipDraftOnLeave.current) return
+    if (cur.isDraft) { if (isDirty()) updateStrategy(cur.id, { ...doc.current }); return }
+    if (!isDirty()) return
+    db.pending.put({ strategyId: cur.id, ...doc.current, updatedAt: Date.now() })
+      .then(() => pendingToDraft(cur.id))
+      .then((d) => d && toast(`未保存的修改已存为草稿「${d.title}」`))
+  }, [])
+
+  // AI 运行前先落盘；AI 改写后重新载入
+  useEffect(() => flushEditors.on(() => { persist() }), [persist])
   useEffect(() => contentChanged.on(async (id) => {
     if (id !== s.id) return
     clearTimeout(timer.current)
-    pending.current = null
-    setSaved(true)
+    await db.pending.delete(id)
     const fresh = await db.strategies.get(id)
-    if (fresh) setSeed((p) => ({ content: fresh.content, rev: p.rev + 1 }))
+    if (!fresh) return
+    doc.current = { title: fresh.title, content: fresh.content }
+    setTitle(fresh.title)
+    setSeed((p) => ({ content: fresh.content, rev: p.rev + 1 }))
+    setDirty(false)
   }), [s.id])
-
-  const titleInit = useRef(true)
+  // 外部（AI）只改了标题时同步
   const lastTitle = useRef(s.title)
   useEffect(() => {
-    // 外部（AI）改了标题时同步到输入框
-    if (s.title !== lastTitle.current && s.title !== title) { titleInit.current = true; setTitle(s.title) }
+    if (s.title !== lastTitle.current && doc.current.title === lastTitle.current) {
+      doc.current.title = s.title
+      setTitle(s.title)
+    }
     lastTitle.current = s.title
-  }, [s.title]) // eslint-disable-line react-hooks/exhaustive-deps
+    setDirty(isDirty())
+  }, [s.title, s.content])
+
+  async function save() {
+    if (isDraft || !isDirty()) return
+    clearTimeout(timer.current)
+    await updateStrategy(s.id, { ...doc.current })
+    await db.pending.delete(s.id)
+    setDirty(false)
+    toast('已保存')
+  }
+
+  async function saveAsNew() {
+    clearTimeout(timer.current)
+    const n = await createStrategy(s.topicId, doc.current.title.trim() || '未命名策略', { content: doc.current.content })
+    await db.pending.delete(s.id)
+    skipDraftOnLeave.current = true
+    toast('已另存为新策略，原策略保持不变')
+    navigate(`/strategy/${n.id}`)
+  }
+
+  async function discard() {
+    if (!(await confirmDialog('放弃未保存的修改，恢复到上次保存的版本？', { ok: '放弃修改' }))) return
+    clearTimeout(timer.current)
+    await db.pending.delete(s.id)
+    doc.current = { title: s.title, content: s.content }
+    setTitle(s.title)
+    setSeed((p) => ({ content: s.content, rev: p.rev + 1 }))
+    setDirty(false)
+  }
+
+  // Ctrl/Cmd + S
   useEffect(() => {
-    if (titleInit.current) { titleInit.current = false; return }
-    const t = window.setTimeout(() => updateStrategy(s.id, { title }), 400)
-    return () => clearTimeout(t)
-  }, [title, s.id])
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (isDraft) persist(); else save() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 
-  async function review(delta: number) {
-    const changed = await addReview(s.id, delta, note.trim())
-    setNote('')
-    if (changed) setFlash(changed === 'eliminated' ? '分数触及淘汰线，策略已被淘汰' : '分数达到留存线，策略已留存 🎉')
+  async function publish() {
+    await persist()
+    await publishDraft(s.id)
+    toast('已发布，开始试用')
   }
-
-  async function manual(to: Strategy['status']) {
-    const msg = to === 'eliminated' ? '手动淘汰' : s.status === 'eliminated' ? '恢复试用（分数归零）' : to === 'kept' ? '手动留存' : '转回试用'
-    await setStatus(s.id, to, note.trim() || msg)
-    setNote('')
-    setFlash('')
+  async function mergeBack() {
+    if (!original) return
+    if (!(await confirmDialog(`用这份草稿覆盖原策略「${original.title}」的标题和正文？草稿随后删除，原策略的分数和复盘记录保留。`, { ok: '覆盖原策略' }))) return
+    await persist()
+    skipDraftOnLeave.current = true
+    const id = await mergeDraftIntoOriginal(s.id)
+    if (id) { toast('已覆盖原策略'); navigate(`/strategy/${id}`) }
   }
-
   async function remove() {
-    if (!(await confirmDialog('删除这个策略？此操作不可撤销。', { ok: '删除' }))) return
+    if (!(await confirmDialog(isDraft ? '删除这份草稿？' : '删除这个策略和它的复盘记录？此操作不可撤销。', { ok: '删除' }))) return
+    skipDraftOnLeave.current = true
     const tid = s.topicId
-    pending.current = null
     await deleteStrategy(s.id)
     navigate(`/topic/${tid}`)
+  }
+  async function manual(to: Status) {
+    const msg = to === 'eliminated' ? '手动淘汰' : s.status === 'eliminated' ? '恢复试用（分数归零）' : to === 'kept' ? '手动留存' : '转回试用'
+    await setStatus(s.id, to, msg)
+    toast(msg)
   }
 
   if (!topic) return null
 
+  const aiPrompt = doc.current.content.trim()
+    ? '帮我完善这个策略的正文，补充具体做法和判断有效的标准'
+    : `根据标题「${doc.current.title}」帮我写这个策略的正文`
+
   return (
-    <div className="page strategy-page">
-      <div className="crumbs">
-        <Link to={`/topic/${topic.id}`}><span className="dot" style={{ background: topic.color }} />{topic.name}</Link>
-        <span>/</span>
-        <span className="muted">{saved ? '已保存' : '保存中…'}</span>
+    <div className="strategy-page">
+      <div className="doc-bar">
+        <div className="crumbs">
+          <Link to={`/topic/${topic.id}`}><span className="dot" style={{ background: topic.color }} />{topic.name}</Link>
+          <span className="sep">/</span>
+          <span className="crumb-title">{title || '未命名策略'}</span>
+        </div>
+        <div className="doc-actions">
+          {isDraft ? (
+            <>
+              <span className="save-state">草稿 · 自动保存</span>
+              <button className="btn ghost danger" onClick={remove}>删除草稿</button>
+              {original && <button className="btn" onClick={mergeBack}>覆盖原策略</button>}
+              <button className="btn primary" onClick={publish}>开始试用</button>
+            </>
+          ) : (
+            <>
+              {dirty && <span className="save-state dirty"><i />未保存</span>}
+              {dirty && <button className="btn ghost" onClick={discard}>放弃</button>}
+              <button className="btn" disabled={!dirty} onClick={saveAsNew}>另存为新策略</button>
+              <button className="btn primary" disabled={!dirty} onClick={save} title="Ctrl/⌘ + S">保存</button>
+            </>
+          )}
+          <span className="bar-sep" />
+          <button className="btn ghost" onClick={() => openAi.emit({ prompt: aiPrompt, send: true })}>✦ AI 帮写</button>
+          <Menu items={[
+            { label: '移动到其他主题…', onClick: () => setMoving(true) },
+            { label: '直接留存', onClick: () => manual('kept'), hidden: isDraft || s.status !== 'trial' },
+            { label: '转回试用', onClick: () => manual('trial'), hidden: isDraft || s.status !== 'kept' },
+            { label: '恢复试用（分数归零）', onClick: () => manual('trial'), hidden: isDraft || s.status !== 'eliminated' },
+            { label: '手动淘汰', onClick: () => manual('eliminated'), hidden: isDraft || s.status === 'eliminated', danger: true },
+            { label: isDraft ? '删除草稿' : '删除策略', onClick: remove, danger: true },
+          ]} />
+        </div>
       </div>
 
       <div className="strategy-layout">
         <article className="doc">
-          <input className="title-input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="策略标题" />
+          <input id="strategy-title" className="title-input" value={title} onChange={(e) => onTitle(e.target.value)} placeholder="策略标题" />
           <div className="doc-meta">
-            <StatusBadge status={s.status} />
-            <span className="muted sm">创建于 {fmtDate(s.createdAt)} · 已使用 {daysSince(s.createdAt)} 天</span>
-            <span style={{ flex: 1 }} />
-            <button className="btn sm" onClick={() => openAi.emit({ prompt: s.content.trim() ? '帮我完善这个策略的正文，补充具体做法和判断有效的标准' : `根据标题「${title}」帮我写这个策略的正文`, send: true })}>✦ AI 帮写</button>
+            {isDraft ? <span className="badge badge-draft">草稿</span> : <StatusBadge status={s.status} />}
+            <span className="muted sm">{isDraft ? `编辑于 ${fmtRelative(s.updatedAt)}` : `创建于 ${fmtDate(s.createdAt).slice(0, 10)} · 已使用 ${daysSince(s.createdAt)} 天`}</span>
           </div>
-          <Suspense fallback={<div className="editor muted" style={{ padding: '16px 48px' }}>加载编辑器…</div>}>
+          <Suspense fallback={<div className="editor muted" style={{ padding: '16px 56px' }}>加载编辑器…</div>}>
             <Editor key={seed.rev} value={seed.content} onChange={onContent} />
           </Suspense>
         </article>
 
-        <aside className="panel">
-          <div className="panel-card">
-            <div className="score-head">
-              <Score score={s.score} size="lg" />
-              <div>
-                <div className="sm muted">当前分数</div>
-                <StatusBadge status={s.status} />
-              </div>
-            </div>
-            <ScoreMeter score={s.score} topic={topic} />
-
-            {s.status !== 'eliminated' ? (
-              <>
-                <textarea className="note" rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="这段时间用下来怎么样？（可选）" />
-                <div className="review-btns">
-                  <button className="btn neg" onClick={() => review(-1)}>👎 不好用 −1</button>
-                  <button className="btn pos" onClick={() => review(1)}>👍 好用 +1</button>
+        <aside className="rail">
+          {isDraft ? (
+            <section className="rail-card">
+              <h4>这是一份草稿</h4>
+              <p className="muted sm">
+                {original
+                  ? <>来自 <Link to={`/strategy/${original.id}`}>「{original.title}」</Link> 未保存的修改。可以「开始试用」作为新策略，或「覆盖原策略」。</>
+                  : '草稿会自动保存，不参与复盘打分。写好后点「开始试用」。'}
+              </p>
+            </section>
+          ) : (
+            <section className="rail-card">
+              <div className="rail-score">
+                <Score score={s.score} size="lg" />
+                <div>
+                  <StatusBadge status={s.status} />
+                  <div className="muted sm">{reviews?.length ? `复盘 ${reviews.length} 次 · 上次 ${fmtRelative(reviews[0].createdAt)}` : '还没复盘过'}</div>
                 </div>
-                <button className="btn ghost sm full" onClick={() => review(0)} disabled={!note.trim()}>只记录观察，不打分</button>
-              </>
-            ) : (
-              <p className="muted sm">这个策略已被淘汰。如果想再试一次，可以恢复试用。</p>
-            )}
-            {flash && <div className="flash">{flash}</div>}
+              </div>
+              <ScoreMeter score={s.score} topic={topic} />
+              {s.status !== 'eliminated' && (
+                <Link to={`/review?s=${s.id}`} className="btn primary full center">复盘</Link>
+              )}
+            </section>
+          )}
 
-            <div className="manual">
-              {s.status !== 'eliminated' && <button className="link-btn danger" onClick={() => manual('eliminated')}>手动淘汰</button>}
-              {s.status === 'eliminated' && <button className="btn ghost sm" onClick={() => manual('trial')}>恢复试用</button>}
-              {s.status === 'trial' && <button className="link-btn" onClick={() => manual('kept')}>直接留存</button>}
-              {s.status === 'kept' && <button className="link-btn" onClick={() => manual('trial')}>转回试用</button>}
-            </div>
-          </div>
-
-          <div className="panel-card">
-            <h3 className="sec-title">复盘记录</h3>
-            {reviews?.length ? (
+          {!isDraft && reviews && reviews.length > 0 && (
+            <section className="rail-card">
+              <h4>复盘记录</h4>
               <ol className="timeline">
                 {reviews.map((r) => (
                   <li key={r.id}>
                     <span className={`delta ${r.delta > 0 ? 'pos' : r.delta < 0 ? 'neg' : ''}`}>
                       {r.delta > 0 ? `+${r.delta}` : r.delta < 0 ? r.delta : '·'}
                     </span>
-                    <div>
-                      {r.statusChange && (
-                        <div className="status-change">{STATUS_LABEL[r.statusChange.from]} → <b>{STATUS_LABEL[r.statusChange.to]}</b></div>
-                      )}
+                    <div className="tl-body">
+                      {r.statusChange && <div className="status-change">{STATUS_LABEL[r.statusChange.from]} → <b>{STATUS_LABEL[r.statusChange.to]}</b></div>}
                       {r.note && <div>{r.note}</div>}
                       <div className="muted sm">{fmtDate(r.createdAt)} · 分数 {r.scoreAfter}</div>
                     </div>
                   </li>
                 ))}
               </ol>
-            ) : <p className="muted sm">还没有复盘记录</p>}
-          </div>
-
-          <div className="panel-card">
-            <label className="field">
-              <span>所属主题</span>
-              <select className="select" value={s.topicId} onChange={(e) => updateStrategy(s.id, { topicId: e.target.value })}>
-                {topics?.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            </label>
-            <button className="link-btn danger" onClick={remove}>删除策略</button>
-          </div>
+            </section>
+          )}
         </aside>
       </div>
+
+      {moving && topics && (
+        <div className="modal-bg" onMouseDown={(e) => e.target === e.currentTarget && setMoving(false)}>
+          <div className="modal">
+            <h2>移动到主题</h2>
+            <div className="move-list">
+              {topics.map((t) => (
+                <button key={t.id} className={`move-item ${t.id === s.topicId ? 'on' : ''}`} onClick={async () => {
+                  await updateStrategy(s.id, { topicId: t.id }); setMoving(false); toast(`已移动到「${t.name}」`)
+                }}>
+                  <span className="dot" style={{ background: t.color }} />{t.name}{t.id === s.topicId && <span className="muted sm">（当前）</span>}
+                </button>
+              ))}
+            </div>
+            <div className="modal-actions"><button className="btn ghost" onClick={() => setMoving(false)}>取消</button></div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

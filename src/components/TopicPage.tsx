@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { createStrategy, db, deleteTopic, STATUS_LABEL, type Status } from '../db'
-import StrategyCard from './StrategyCard'
+import { createStrategy, db, deleteTopic, STATUS_LABEL, type Status, type Strategy } from '../db'
+import StrategyCard, { useLastReviews } from './StrategyCard'
+import Menu from './Menu'
 import TopicDialog from './TopicDialog'
 import { confirmDialog } from './Dialogs'
 import { openAi } from '../bus'
 
-type Filter = 'active' | Status | 'all'
+type Filter = 'active' | Status | 'draft' | 'all'
 type Sort = 'score' | 'updated' | 'created'
 
 export default function TopicPage() {
@@ -18,17 +19,18 @@ export default function TopicPage() {
   const [filter, setFilter] = useState<Filter>('active')
   const [sort, setSort] = useState<Sort>('score')
   const [editing, setEditing] = useState(false)
+  const last = useLastReviews()
 
   if (topic === undefined || !strategies) return null
   if (!topic) return <div className="page"><p className="muted">主题不存在</p></div>
 
-  const count = (f: Filter) => strategies.filter((s) => match(s.status, f)).length
+  const count = (f: Filter) => strategies.filter((s) => match(s, f)).length
   const list = strategies
-    .filter((s) => match(s.status, filter))
+    .filter((s) => match(s, filter))
     .sort((a, b) => sort === 'score' ? b.score - a.score || b.updatedAt - a.updatedAt : sort === 'updated' ? b.updatedAt - a.updatedAt : b.createdAt - a.createdAt)
 
   async function add() {
-    const s = await createStrategy(id)
+    const s = await createStrategy(id, '未命名策略', { isDraft: true })
     navigate(`/strategy/${s.id}`)
   }
 
@@ -38,8 +40,8 @@ export default function TopicPage() {
     navigate('/')
   }
 
-  const tabs: Filter[] = ['active', 'trial', 'kept', 'eliminated', 'all']
-  const tabLabel = (f: Filter) => f === 'active' ? '在用' : f === 'all' ? '全部' : STATUS_LABEL[f]
+  const tabs: Filter[] = ['active', 'trial', 'kept', 'eliminated', 'draft', 'all']
+  const tabLabel = (f: Filter) => f === 'active' ? '在用' : f === 'all' ? '全部' : f === 'draft' ? '草稿' : STATUS_LABEL[f]
 
   return (
     <div className="page">
@@ -50,11 +52,13 @@ export default function TopicPage() {
           <p className="muted sm">留存线 +{topic.keepAt} · 淘汰线 {topic.eliminateAt}</p>
         </div>
         <div className="head-actions">
-          <button className="btn" onClick={() => openAi.emit({ prompt: '为当前主题再想 3 个新策略' })}>✦ AI 写策略</button>
-          <button className="btn" onClick={() => openAi.emit({ prompt: '分析当前主题的策略和复盘记录，给我改进建议', send: true })}>✦ AI 复盘</button>
-          <button className="btn ghost" onClick={() => setEditing(true)}>编辑主题</button>
-          <button className="btn ghost danger" onClick={remove}>删除</button>
+          <button className="btn ghost" onClick={() => openAi.emit({ prompt: '为当前主题再想 3 个新策略' })}>✦ AI 写策略</button>
           <button className="btn primary" onClick={add}>＋ 新建策略</button>
+          <Menu items={[
+            { label: '编辑主题', onClick: () => setEditing(true) },
+            { label: 'AI 分析与建议', onClick: () => openAi.emit({ prompt: '分析当前主题的策略和复盘记录，给我改进建议', send: true }) },
+            { label: '删除主题', onClick: remove, danger: true },
+          ]} />
         </div>
       </header>
 
@@ -75,7 +79,7 @@ export default function TopicPage() {
 
       {list.length ? (
         <div className="grid">
-          {list.map((s) => <StrategyCard key={s.id} s={s} topic={topic} />)}
+          {list.map((s) => <StrategyCard key={s.id} s={s} topic={topic} last={last.get(s.id)} />)}
         </div>
       ) : (
         <div className="empty">
@@ -88,8 +92,10 @@ export default function TopicPage() {
   )
 }
 
-function match(st: Status, f: Filter) {
+function match(s: Strategy, f: Filter) {
   if (f === 'all') return true
-  if (f === 'active') return st !== 'eliminated'
-  return st === f
+  if (f === 'draft') return !!s.isDraft
+  if (s.isDraft) return false
+  if (f === 'active') return s.status !== 'eliminated'
+  return s.status === f
 }

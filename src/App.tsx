@@ -1,11 +1,12 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { Route, Routes } from 'react-router-dom'
+import { Route, Routes, useLocation } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import Overview from './components/Overview'
 import TopicPage from './components/TopicPage'
 import StrategyPage from './components/StrategyPage'
 import { DialogHost } from './components/Dialogs'
 import { openAi } from './bus'
+import ReviewMode from './components/ReviewMode'
 
 const AiPanel = lazy(() => import('./components/AiPanel'))
 
@@ -15,6 +16,10 @@ export default function App() {
   const [aiLoaded, setAiLoaded] = useState(false)
 
   useEffect(() => openAi.on(() => { setAiLoaded(true); setAiOpen(true) }), [])
+  const { pathname } = useLocation()
+
+  // 复盘是专注模式：不显示侧边栏和 AI
+  if (pathname.startsWith('/review')) return <><ReviewMode /><DialogHost /></>
 
   return (
     <div className={`app ${navOpen ? 'nav-open' : ''} ${aiOpen ? 'ai-open' : ''}`}>

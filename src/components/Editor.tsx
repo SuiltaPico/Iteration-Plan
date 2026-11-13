@@ -6,11 +6,12 @@ import { fileToDataURL } from '../util'
 
 interface Props {
   value: string
-  onChange: (md: string) => void
+  onChange?: (md: string) => void
+  readOnly?: boolean
 }
 
 /** 所见即所得 Markdown 编辑器：标题/列表/任务清单/表格/代码块/数学公式/图片，支持 / 斜杠菜单 与 选中浮动工具栏 */
-export default function Editor({ value, onChange }: Props) {
+export default function Editor({ value, onChange, readOnly }: Props) {
   const root = useRef<HTMLDivElement>(null)
   const changeRef = useRef(onChange)
   changeRef.current = onChange
@@ -21,6 +22,8 @@ export default function Editor({ value, onChange }: Props) {
       root: root.current,
       defaultValue: value,
       featureConfigs: {
+        // 使用浏览器原生光标：Crepe 的虚拟光标按字体测量定位，在部分系统/字体下会错位
+        [Crepe.Feature.Cursor]: { virtual: false },
         [Crepe.Feature.Placeholder]: { text: '写下策略内容… 输入 / 唤出菜单', mode: 'block' },
         [Crepe.Feature.ImageBlock]: {
           onUpload: fileToDataURL,
@@ -65,10 +68,10 @@ export default function Editor({ value, onChange }: Props) {
     })
     crepe.on((l) => {
       l.markdownUpdated((_ctx, md, prev) => {
-        if (md !== prev) changeRef.current(md)
+        if (md !== prev) changeRef.current?.(md)
       })
     })
-    crepe.create()
+    crepe.create().then(() => { if (readOnly) crepe.setReadonly(true) })
     return () => {
       crepe.destroy()
     }
@@ -76,5 +79,5 @@ export default function Editor({ value, onChange }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  return <div className="editor" ref={root} />
+  return <div className={`editor ${readOnly ? 'readonly' : ''}`} ref={root} />
 }

@@ -15,7 +15,7 @@ export default function Sidebar({ onNavigate }: { onNavigate: () => void }) {
 
   const counts = new Map<string, number>()
   strategies?.forEach((s) => {
-    if (s.status !== 'eliminated') counts.set(s.topicId, (counts.get(s.topicId) ?? 0) + 1)
+    if (s.status !== 'eliminated' && !s.isDraft) counts.set(s.topicId, (counts.get(s.topicId) ?? 0) + 1)
   })
 
   return (

@@ -30,7 +30,8 @@ export const tools = {
         const mine = strategies.filter((s) => s.topicId === t.id)
         return {
           id: t.id, name: t.name, description: t.description, keepAt: t.keepAt, eliminateAt: t.eliminateAt,
-          trial: mine.filter((s) => s.status === 'trial').length,
+          drafts: mine.filter((s) => s.isDraft).length,
+          trial: mine.filter((s) => !s.isDraft && s.status === 'trial').length,
           kept: mine.filter((s) => s.status === 'kept').length,
           eliminated: mine.filter((s) => s.status === 'eliminated').length,
         }
@@ -48,7 +49,7 @@ export const tools = {
       let list = topicId ? await db.strategies.where('topicId').equals(topicId).toArray() : await db.strategies.toArray()
       if (status) list = list.filter((s) => s.status === status)
       return list.map((s) => ({
-        id: s.id, topicId: s.topicId, title: s.title, score: s.score, status: s.status,
+        id: s.id, topicId: s.topicId, title: s.title, score: s.score, status: s.isDraft ? 'draft' : s.status,
         daysInUse: daysSince(s.createdAt), excerpt: excerpt(s.content, 120),
       }))
     },

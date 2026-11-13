@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, STATUS_LABEL, type Strategy } from '../db'
-import StrategyCard from './StrategyCard'
+import CheckIn from './CheckIn'
+import StrategyCard, { useLastReviews } from './StrategyCard'
 import TopicDialog from './TopicDialog'
 import { fmtRelative } from '../util'
 import { openAi } from '../bus'
@@ -11,6 +12,7 @@ export default function Overview() {
   const topics = useLiveQuery(() => db.topics.orderBy('order').toArray(), [])
   const strategies = useLiveQuery(() => db.strategies.toArray(), [])
   const recent = useLiveQuery(() => db.reviews.orderBy('createdAt').reverse().limit(8).toArray(), [])
+  const last = useLastReviews()
   const [q, setQ] = useState('')
   const [creating, setCreating] = useState(false)
   const navigate = useNavigate()
@@ -27,8 +29,9 @@ export default function Overview() {
 
   if (!topics || !strategies) return null
 
+  const real = strategies.filter((s) => !s.isDraft)
   const stat = { trial: 0, kept: 0, eliminated: 0 }
-  strategies.forEach((s) => stat[s.status]++)
+  real.forEach((s) => stat[s.status]++)
   const topicMap = new Map(topics.map((t) => [t.id, t]))
   const sMap = new Map(strategies.map((s) => [s.id, s]))
 
@@ -56,42 +59,51 @@ export default function Overview() {
   return (
     <div className="page">
       <header className="page-head">
-        <div>
+        <div className="head-text">
           <h1>总览</h1>
-          <p className="muted">{topics.length} 个主题 · 试用中 {stat.trial} · 已留存 {stat.kept} · 已淘汰 {stat.eliminated}</p>
+          <div className="stat-row">
+            <span><b>{stat.trial}</b> 试用中</span>
+            <span><b>{stat.kept}</b> 已留存</span>
+            <span><b>{stat.eliminated}</b> 已淘汰</span>
+          </div>
         </div>
         <div className="head-actions">
           <input className="search" placeholder="搜索策略…" value={q} onChange={(e) => setQ(e.target.value)} />
-          <button className="btn" onClick={() => openAi.emit({ prompt: '帮我建一个主题：' })}>✦ AI 生成</button>
-          <button className="btn" onClick={() => openAi.emit({ prompt: '看看我所有的策略，给我复盘建议', send: true })}>✦ AI 复盘</button>
+          <button className="btn ghost" onClick={() => openAi.emit({ prompt: '帮我建一个主题：' })}>✦ AI 生成</button>
         </div>
       </header>
+
+      {!hits && <CheckIn strategies={real} topics={topicMap} last={last} />}
 
       {hits ? (
         <section>
           <h3 className="sec-title">搜索结果（{hits.length}）</h3>
           <div className="grid">
-            {hits.map((s) => <StrategyCard key={s.id} s={s} topic={topicMap.get(s.topicId)} showTopic />)}
+            {hits.map((s) => <StrategyCard key={s.id} s={s} topic={topicMap.get(s.topicId)} showTopic last={last.get(s.id)} />)}
           </div>
         </section>
       ) : (
         <div className="overview-layout">
           <div className="topic-boards">
             {topics.map((t) => {
-              const list = (byTopic.get(t.id) ?? []).filter((s) => s.status !== 'eliminated').sort((a, b) => b.score - a.score)
-              const elim = (byTopic.get(t.id) ?? []).length - list.length
+              const all = byTopic.get(t.id) ?? []
+              const list = all.filter((s) => !s.isDraft && s.status !== 'eliminated').sort((a, b) => b.score - a.score)
+              const drafts = all.filter((s) => s.isDraft).length
+              const elim = all.filter((s) => !s.isDraft && s.status === 'eliminated').length
               return (
-                <section key={t.id} className="board" style={{ '--topic': t.color } as React.CSSProperties}>
+                <section key={t.id} className="board">
                   <Link to={`/topic/${t.id}`} className="board-head">
                     <span className="dot" style={{ background: t.color }} />
                     <h2>{t.name}</h2>
-                    <span className="muted sm">{list.length} 个在用{elim ? ` · ${elim} 个已淘汰` : ''}</span>
+                    <span className="muted sm">
+                      {list.length} 个在用{elim ? ` · ${elim} 个已淘汰` : ''}{drafts ? ` · ${drafts} 份草稿` : ''}
+                    </span>
                     <span className="arrow">→</span>
                   </Link>
                   {t.description && <p className="board-desc">{t.description}</p>}
                   {list.length ? (
                     <div className="grid">
-                      {list.map((s) => <StrategyCard key={s.id} s={s} topic={t} />)}
+                      {list.map((s) => <StrategyCard key={s.id} s={s} topic={t} last={last.get(s.id)} />)}
                     </div>
                   ) : (
                     <p className="muted empty-line">暂无在用策略</p>
