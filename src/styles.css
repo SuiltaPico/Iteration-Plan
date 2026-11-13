@@ -467,8 +467,6 @@ textarea { resize: vertical; }
   .doc { padding: 20px 0 28px; }
   .editor .milkdown .ProseMirror { padding: 12px 16px 24px 40px; }
   .review-title { font-size: 24px; }
-  .review-actions { grid-template-columns: 1fr 1fr; }
-  .review-actions .btn:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
 }
 
 /* 问一问 */
@@ -481,3 +479,87 @@ textarea { resize: vertical; }
 .checkin p { margin: 0; font-size: 15px; font-weight: 600; color: var(--accent-ink); }
 .checkin-actions { display: flex; gap: 8px; }
 .review-bar { grid-template-columns: 1fr auto 1fr; }
+
+/* ======================================================================
+   问题 / 判断标准 / 执行结果 / 版本 / 教训 / 打法
+   ====================================================================== */
+.ver { font-size: 11px; font-weight: 700; color: var(--text-2); background: var(--surface-2); border-radius: 5px; padding: 1px 6px; margin-left: 6px; vertical-align: 2px; font-variant-numeric: tabular-nums; }
+.row-inline { display: inline-flex; align-items: center; gap: 2px; }
+.row-btns.end { justify-content: flex-end; }
+.chip { border: 1px solid var(--border); background: var(--surface); border-radius: 99px; padding: 3px 12px; font-size: 13px; cursor: pointer; color: var(--text-2); }
+.chip:hover { border-color: var(--primary); color: var(--primary); }
+.chip.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+/* 保存按钮组 */
+.split { display: inline-flex; }
+.split > .btn { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.split .split-caret { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 1px solid color-mix(in srgb, #fff 35%, var(--primary)); padding: 7px 9px; font-size: 11px; }
+
+/* 判断标准 */
+.criteria-field { display: flex; flex-direction: column; gap: 4px; margin: 14px 56px 2px; padding: 10px 14px; border-radius: 10px; background: var(--surface-2); }
+.criteria-field > span { font-size: 12px; font-weight: 600; color: var(--text-2); }
+.criteria-field textarea { border: none !important; box-shadow: none !important; background: transparent; padding: 0; resize: none; overflow: hidden; font-size: 14px; line-height: 1.6; }
+.criteria-box { padding: 12px 16px; border-radius: 12px; background: var(--primary-soft); }
+.criteria-box .label { font-size: 12px; font-weight: 600; color: var(--accent-ink); margin-bottom: 2px; }
+.criteria-box p { margin: 0; white-space: pre-wrap; }
+.met-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.adherence { padding: 12px 14px; border-radius: 12px; background: color-mix(in srgb, var(--warn) 12%, var(--surface)); color: var(--text); font-size: 13px; line-height: 1.7; }
+.adherence a { color: var(--primary); font-weight: 600; }
+.rail-card.adherence { border-color: transparent; }
+
+/* 复盘页按钮 */
+.review-actions { grid-template-columns: repeat(3, 1fr); }
+.review-actions small { font-weight: 700; opacity: .75; }
+.review-ask > .link-btn { align-self: center; font-size: 13px; }
+
+/* 复盘记录 */
+.outcome { font-size: 12px; font-weight: 600; }
+.outcome.o-worked { color: var(--pos); }
+.outcome.o-failed { color: var(--neg); }
+.outcome.o-skipped { color: var(--warn); }
+.timeline .tl-version { display: block; text-align: center; font-size: 11px; color: var(--text-3); border-top: 1px dashed var(--border); padding-top: 6px; }
+
+/* 教训 */
+.lesson-text { margin: 0; white-space: pre-wrap; font-size: 13px; line-height: 1.7; }
+.lesson-editor { display: flex; flex-direction: column; gap: 8px; }
+
+/* 主题页：视图切换 */
+.view-seg { margin-bottom: 22px; }
+.view-seg button { padding: 6px 18px; }
+
+/* 问题分组 */
+.problems { display: flex; flex-direction: column; gap: 30px; }
+.problem { scroll-margin-top: 16px; }
+.problem-head { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; }
+.problem-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.problem-title h2 { font-size: 17px; margin: 0; }
+.problem-title p { margin: 0; }
+.problem-note { margin: -4px 0 12px; font-size: 13px; color: var(--accent-ink); background: var(--primary-soft); padding: 8px 12px; border-radius: 9px; }
+.add-line { width: 100%; background: none; cursor: pointer; color: var(--text-2); font: inherit; }
+.add-line:hover { border-color: var(--primary); color: var(--primary); }
+.problems-foot { display: flex; align-items: center; gap: 16px; }
+.empty p { margin: 0; }
+.card-problem { font-size: 11px; font-weight: 600; color: var(--text-3); letter-spacing: .02em; }
+
+/* 打法 */
+.playbook { display: flex; flex-direction: column; gap: 28px; max-width: 820px; }
+.playbook-group h2 { font-size: 13px; color: var(--text-2); font-weight: 600; letter-spacing: .04em; margin: 0 0 10px; }
+.playbook-item { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 22px; display: flex; flex-direction: column; gap: 8px; }
+.playbook-item + .playbook-item { margin-top: 12px; }
+.playbook-title { font-size: 18px; font-weight: 700; }
+.playbook-title:hover { color: var(--primary); }
+.playbook-criteria { margin: 0; font-size: 13px; color: var(--text-2); }
+.playbook-criteria span { font-weight: 600; color: var(--accent-ink); margin-right: 8px; }
+
+/* 踩过的坑 */
+.lessons { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; max-width: 820px; }
+.lesson { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; display: flex; flex-direction: column; gap: 6px; }
+.lesson-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.lesson-title { font-weight: 600; text-decoration: line-through; text-decoration-color: var(--text-3); }
+.lesson-title:hover { color: var(--primary); }
+.lesson .link-btn { align-self: flex-start; }
+
+@media (max-width: 760px) {
+  .criteria-field { margin: 12px 16px 2px; }
+  .review-actions { grid-template-columns: 1fr; }
+}

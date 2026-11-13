@@ -10,6 +10,7 @@ import { openAi } from '../bus'
 export default function Overview() {
   const topics = useLiveQuery(() => db.topics.orderBy('order').toArray(), [])
   const strategies = useLiveQuery(() => db.strategies.toArray(), [])
+  const problems = useLiveQuery(() => db.problems.toArray(), [])
   const last = useLastReviews()
   const [q, setQ] = useState('')
   const [creating, setCreating] = useState(false)
@@ -26,6 +27,7 @@ export default function Overview() {
   }, [strategies])
 
   if (!topics || !strategies) return null
+  const pname = new Map((problems ?? []).map((p) => [p.id, p.title]))
 
   const real = strategies.filter((s) => !s.isDraft)
   const topicMap = new Map(topics.map((t) => [t.id, t]))
@@ -69,7 +71,7 @@ export default function Overview() {
         <section>
           <h3 className="sec-title">搜索结果（{hits.length}）</h3>
           <div className="grid">
-            {hits.map((s) => <StrategyCard key={s.id} s={s} topic={topicMap.get(s.topicId)} showTopic last={last.get(s.id)} />)}
+            {hits.map((s) => <StrategyCard key={s.id} s={s} topic={topicMap.get(s.topicId)} showTopic last={last.get(s.id)} problem={s.problemId ? pname.get(s.problemId) : undefined} />)}
           </div>
         </section>
       ) : (
@@ -87,7 +89,7 @@ export default function Overview() {
                   {t.description && <p className="board-desc">{t.description}</p>}
                   {list.length ? (
                     <div className="grid">
-                      {list.map((s) => <StrategyCard key={s.id} s={s} topic={t} last={last.get(s.id)} />)}
+                      {list.map((s) => <StrategyCard key={s.id} s={s} topic={t} last={last.get(s.id)} problem={s.problemId ? pname.get(s.problemId) : undefined} />)}
                     </div>
                   ) : (
                     <p className="muted empty-line">暂无在用策略</p>

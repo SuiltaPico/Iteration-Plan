@@ -16,10 +16,10 @@ export default function App() {
   const [aiLoaded, setAiLoaded] = useState(false)
 
   useEffect(() => openAi.on(() => { setAiLoaded(true); setAiOpen(true) }), [])
-  const { pathname } = useLocation()
+  const { pathname, search } = useLocation()
 
   // 复盘是专注模式：不显示侧边栏和 AI
-  if (pathname.startsWith('/review')) return <><ReviewMode /><DialogHost /></>
+  if (pathname.startsWith('/review')) return <><ReviewMode key={search} /><DialogHost /></>
 
   return (
     <div className={`app ${navOpen ? 'nav-open' : ''} ${aiOpen ? 'ai-open' : ''}`}>

@@ -1,7 +1,10 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { addReview, db, STATUS_LABEL, type Status } from '../db'
+import {
+  addReview, CRITERIA_LABEL, db, OUTCOME_LABEL, outcomeOf, skippedRecently, STATUS_LABEL, updateStrategy, versionOf,
+  type CriteriaMet, type Outcome, type Status,
+} from '../db'
 import { daysSince, fmtRelative } from '../util'
 import { Score, StatusBadge } from './ScoreBadge'
 
@@ -15,15 +18,21 @@ export default function ReviewMode() {
   const id = params.get('s') ?? ''
   const fromCheckIn = params.get('from') === 'checkin'
   const [note, setNote] = useState('')
+  const [met, setMet] = useState<CriteriaMet | undefined>()
   const [busy, setBusy] = useState(false)
   const [flash, setFlash] = useState<{ text: string; tone: 'pos' | 'neg' | 'info' } | null>(null)
+  const [askLesson, setAskLesson] = useState(false)
+  const [lesson, setLesson] = useState('')
   const [expanded, setExpanded] = useState(false)
   const [overflow, setOverflow] = useState(false)
   const noteRef = useRef<HTMLTextAreaElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+  const backTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => clearTimeout(backTimer.current), [])
 
   const s = useLiveQuery(() => db.strategies.get(id).then((x) => x ?? null), [id])
   const topic = useLiveQuery(() => (s ? db.topics.get(s.topicId) : undefined), [s?.topicId])
+  const problem = useLiveQuery(() => (s?.problemId ? db.problems.get(s.problemId) : undefined), [s?.problemId])
   const reviews = useLiveQuery(() => db.reviews.where('strategyId').equals(id).reverse().sortBy('createdAt'), [id])
 
   useEffect(() => { noteRef.current?.focus() }, [s?.id])
@@ -43,19 +52,34 @@ export default function ReviewMode() {
     else navigate(`/strategy/${id}`)
   }
 
-  async function act(delta: number) {
+  async function act(outcome: Outcome) {
     if (!s || busy) return
-    if (delta === 0 && !note.trim()) { noteRef.current?.focus(); return }
+    if (outcome === 'note' && !note.trim()) { noteRef.current?.focus(); return }
     setBusy(true)
-    const changed = await addReview(s.id, delta, note.trim())
-    const sign = delta > 0 ? '+1' : delta < 0 ? '−1' : '记下了'
-    setFlash(changed
-      ? { text: `${sign}，${changed === 'kept' ? '达到留存线，已留存' : '达到淘汰线，已淘汰'}`, tone: changed === 'kept' ? 'pos' : 'neg' }
-      : { text: sign, tone: delta > 0 ? 'pos' : delta < 0 ? 'neg' : 'info' })
-    setTimeout(back, changed ? 1400 : 700)
+    const changed = await addReview(s.id, outcome, note.trim(), s.criteria?.trim() && outcome !== 'skipped' && outcome !== 'note' ? met : undefined)
+    const label = outcome === 'worked' ? '+1' : outcome === 'failed' ? '−1' : outcome === 'skipped' ? '记下了：没怎么执行' : '记下了'
+    if (changed === 'eliminated') {
+      // 被淘汰时，趁热记下教训
+      setFlash(null)
+      setAskLesson(true)
+      setBusy(false)
+      return
+    }
+    setFlash(changed === 'kept'
+      ? { text: `${label}，达到留存线，已留存`, tone: 'pos' }
+      : { text: label, tone: outcome === 'worked' ? 'pos' : outcome === 'failed' ? 'neg' : 'info' })
+    backTimer.current = window.setTimeout(back, changed ? 1400 : 700)
+  }
+
+  async function saveLesson() {
+    if (s && lesson.trim()) await updateStrategy(s.id, { lesson: lesson.trim() })
+    back()
   }
 
   if (s === undefined) return <div className="review-shell" />
+
+  const skipped = s && reviews ? skippedRecently(s, reviews) : 0
+  const history = (reviews ?? []).filter((r) => r.note || r.statusChange)
 
   return (
     <div className="review-shell">
@@ -71,15 +95,31 @@ export default function ReviewMode() {
             <p className="muted">这个策略已不存在。</p>
             <button className="btn" onClick={() => navigate('/')}>回到总览</button>
           </div>
+        ) : askLesson ? (
+          <section className="review-card">
+            <div className="review-topic"><span className="dot" style={{ background: topic.color }} />{topic.name}{problem && <> · {problem.title}</>}</div>
+            <h1 className="review-title">「{s.title}」被淘汰了</h1>
+            <div className="review-ask">
+              <label htmlFor="review-lesson">为什么不行？学到了什么？</label>
+              <textarea id="review-lesson" autoFocus rows={4} value={lesson} onChange={(e) => setLesson(e.target.value)}
+                placeholder="例如：需要每天固定时间，但我的作息不规律，执行不了。下次找不依赖固定时间的做法。" />
+              <p className="muted sm">会记在「{topic.name}」的「踩过的坑」里，以后你和 AI 出主意时都能参考。</p>
+              <div className="row-btns end">
+                <button className="btn ghost" onClick={back}>跳过</button>
+                <button className="btn primary" disabled={!lesson.trim()} onClick={saveLesson}>记下</button>
+              </div>
+            </div>
+          </section>
         ) : (
           <section className="review-card">
-            <div className="review-topic"><span className="dot" style={{ background: topic.color }} />{topic.name}</div>
+            <div className="review-topic"><span className="dot" style={{ background: topic.color }} />{topic.name}{problem && <> · {problem.title}</>}</div>
             <h1 className="review-title">{s.title || '未命名策略'}</h1>
             <div className="review-meta">
               <StatusBadge status={s.status} />
               <Score score={s.score} />
+              {versionOf(s) > 1 && <span className="ver">v{versionOf(s)}</span>}
               <span className="muted sm">
-                已使用 {daysSince(s.createdAt)} 天 · {reviews?.length ? `上次复盘 ${fmtRelative(reviews[0].createdAt)}` : '还没复盘过'}
+                已使用 {daysSince(s.createdAt)} 天 · {history.length ? `上次复盘 ${fmtRelative(history[0].createdAt)}` : '还没复盘过'}
               </span>
               {s.status !== 'eliminated' && (
                 <span className="review-hint">
@@ -88,6 +128,20 @@ export default function ReviewMode() {
               )}
             </div>
 
+            {s.criteria?.trim() && (
+              <div className="criteria-box">
+                <div className="label">怎么判断有效</div>
+                <p>{s.criteria}</p>
+              </div>
+            )}
+
+            {skipped >= 2 && (
+              <div className="adherence">
+                最近 {skipped} 次复盘都是「没怎么执行」。问题可能不在效果，而在太难坚持。
+                考虑把它<Link to={`/strategy/${s.id}`}>简化成更容易做到的版本</Link>（存为新版本重新试用）。
+              </div>
+            )}
+
             {s.content.trim() && (
               <div ref={contentRef} className={`review-content ${expanded ? 'open' : ''}`}>
                 <Suspense fallback={null}><Editor key={s.id} value={s.content} readOnly /></Suspense>
@@ -95,13 +149,16 @@ export default function ReviewMode() {
               </div>
             )}
 
-            {reviews && reviews.some((r) => r.note || r.statusChange) && (
+            {history.length > 0 && (
               <div className="review-history">
                 <div className="label">之前说过</div>
-                {reviews.filter((r) => r.note || r.statusChange).slice(0, 3).map((r) => (
+                {history.slice(0, 3).map((r) => (
                   <div key={r.id} className="review-history-row">
-                    <span className={`delta ${r.delta > 0 ? 'pos' : r.delta < 0 ? 'neg' : ''}`}>{r.delta > 0 ? `+${r.delta}` : r.delta < 0 ? r.delta : '·'}</span>
-                    <span>{r.note || (r.statusChange && `${STATUS_LABEL[r.statusChange.from as Status]} → ${STATUS_LABEL[r.statusChange.to as Status]}`)}</span>
+                    <span className={`delta ${r.delta > 0 ? 'pos' : r.delta < 0 ? 'neg' : ''}`}>{r.event ? 'v' : r.delta > 0 ? `+${r.delta}` : r.delta < 0 ? r.delta : '·'}</span>
+                    <span>
+                      {!r.event && outcomeOf(r) === 'skipped' && <span className="muted">没怎么执行 · </span>}
+                      {r.note || (r.statusChange && `${STATUS_LABEL[r.statusChange.from as Status]} → ${STATUS_LABEL[r.statusChange.to as Status]}`)}
+                    </span>
                     <span className="muted sm">{fmtRelative(r.createdAt)}</span>
                   </div>
                 ))}
@@ -116,13 +173,22 @@ export default function ReviewMode() {
             ) : (
               <div className="review-ask">
                 <label htmlFor="review-note">这段时间用下来怎么样？</label>
-                <textarea id="review-note" ref={noteRef} rows={4} value={note} onChange={(e) => setNote(e.target.value)}
+                {s.criteria?.trim() && (
+                  <div className="met-row">
+                    <span className="muted sm">对照判断标准：</span>
+                    {(Object.keys(CRITERIA_LABEL) as CriteriaMet[]).map((k) => (
+                      <button key={k} className={`chip ${met === k ? 'on' : ''}`} onClick={() => setMet(met === k ? undefined : k)}>{CRITERIA_LABEL[k]}</button>
+                    ))}
+                  </div>
+                )}
+                <textarea id="review-note" ref={noteRef} rows={3} value={note} onChange={(e) => setNote(e.target.value)}
                   placeholder="写下感受、观察或想调整的地方（选「只记录」时必填）" />
                 <div className="review-actions">
-                  <button className="btn neg lg" disabled={busy} onClick={() => act(-1)}>不好用 −1</button>
-                  <button className="btn lg" disabled={busy} onClick={() => act(0)} title="不改变分数，只记下这次观察">只记录</button>
-                  <button className="btn pos lg" disabled={busy} onClick={() => act(1)}>好用 +1</button>
+                  <button className="btn pos lg" disabled={busy} onClick={() => act('worked')}>{OUTCOME_LABEL.worked} <small>+1</small></button>
+                  <button className="btn neg lg" disabled={busy} onClick={() => act('failed')}>{OUTCOME_LABEL.failed} <small>−1</small></button>
+                  <button className="btn lg" disabled={busy} onClick={() => act('skipped')} title="不计分。多次没执行会提示你简化策略">{OUTCOME_LABEL.skipped}</button>
                 </div>
+                <button className="link-btn" disabled={busy} onClick={() => act('note')}>只记录观察，不评价</button>
               </div>
             )}
             {flash && <div className={`review-flash ${flash.tone}`}>{flash.text}</div>}

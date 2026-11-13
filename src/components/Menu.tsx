@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 export interface MenuItem { label: string; onClick: () => void; danger?: boolean; hidden?: boolean }
 
 /** 「⋯」更多操作菜单 */
-export default function Menu({ items, label = '更多操作' }: { items: MenuItem[]; label?: ReactNode }) {
+export default function Menu({ items, label = '更多操作', trigger, triggerClass = 'btn ghost icon' }: { items: MenuItem[]; label?: ReactNode; trigger?: ReactNode; triggerClass?: string }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -16,7 +16,7 @@ export default function Menu({ items, label = '更多操作' }: { items: MenuIte
   }, [open])
   return (
     <div className="menu" ref={ref}>
-      <button className="btn ghost icon" aria-label="更多操作" title="更多操作" aria-expanded={open} onClick={() => setOpen(!open)}>⋯</button>
+      <button className={triggerClass} aria-label={typeof label === 'string' ? label : '更多操作'} title={typeof label === 'string' ? label : undefined} aria-expanded={open} onClick={() => setOpen(!open)}>{trigger ?? '⋯'}</button>
       {open && (
         <div className="menu-pop" role="menu" aria-label={typeof label === 'string' ? label : undefined}>
           {items.filter((i) => !i.hidden).map((i) => (
