@@ -1,8 +1,8 @@
 import { tool } from 'ai'
 import { z } from 'zod'
 import {
-  addReview, createStrategy, createTopic, db, deleteStrategy, setStatus, STATUS_LABEL,
-  TOPIC_COLORS, updateStrategy, updateTopic,
+  addReview, createProblem, createStrategy, createTopic, db, deleteStrategy, OUTCOME_LABEL, outcomeOf, setStatus,
+  STATUS_LABEL, TOPIC_COLORS, updateProblem, updateTopic, versionOf,
 } from '../db'
 import { contentChanged } from '../bus'
 import { daysSince, excerpt, fmtDate } from '../util'
@@ -19,10 +19,15 @@ async function mustTopic(id: string) {
   if (!t) throw new Error(`主题 ${id} 不存在，请先用 list_topics 查询正确的 id`)
   return t
 }
+async function checkProblem(problemId: string | undefined, topicId: string) {
+  if (!problemId) return
+  const p = await db.problems.get(problemId)
+  if (!p || p.topicId !== topicId) throw new Error(`问题 ${problemId} 不在这个主题下，请先用 list_problems 查询`)
+}
 
 export const tools = {
   list_topics: tool({
-    description: '列出所有主题，包含各状态的策略数量与留存线/淘汰线。',
+    description: '列出所有主题，包含留存线/淘汰线和各状态策略数量。',
     inputSchema: z.object({}),
     execute: async () => {
       const [topics, strategies] = await Promise.all([db.topics.orderBy('order').toArray(), db.strategies.toArray()])
@@ -32,44 +37,92 @@ export const tools = {
           id: t.id, name: t.name, description: t.description, keepAt: t.keepAt, eliminateAt: t.eliminateAt,
           drafts: mine.filter((s) => s.isDraft).length,
           trial: mine.filter((s) => !s.isDraft && s.status === 'trial').length,
-          kept: mine.filter((s) => s.status === 'kept').length,
-          eliminated: mine.filter((s) => s.status === 'eliminated').length,
+          kept: mine.filter((s) => !s.isDraft && s.status === 'kept').length,
+          eliminated: mine.filter((s) => !s.isDraft && s.status === 'eliminated').length,
         }
       })
     },
   }),
 
+  list_problems: tool({
+    description: '列出某个主题下的问题。问题是主题里要解决的具体事情，问题下的策略互为候选解法。',
+    inputSchema: z.object({ topicId: z.string() }),
+    execute: async ({ topicId }) => {
+      const problems = await db.problems.where('topicId').equals(topicId).sortBy('order')
+      return problems.map((p) => ({ id: p.id, title: p.title, description: p.description }))
+    },
+  }),
+
+  create_problem: tool({
+    description: '在主题下新建一个问题。',
+    inputSchema: z.object({ topicId: z.string(), title: z.string().min(1), description: z.string().optional() }),
+    execute: async ({ topicId, title, description }) => {
+      await mustTopic(topicId)
+      const p = await createProblem(topicId, title, description ?? '')
+      return { id: p.id, title: p.title }
+    },
+  }),
+
+  update_problem: tool({
+    description: '修改问题的标题或说明。',
+    inputSchema: z.object({ id: z.string(), title: z.string().min(1).optional(), description: z.string().optional() }),
+    execute: async ({ id, ...patch }) => {
+      if (!(await db.problems.get(id))) throw new Error(`问题 ${id} 不存在`)
+      await updateProblem(id, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)))
+      return { ok: true }
+    },
+  }),
+
   list_strategies: tool({
-    description: '列出策略（可按主题、状态筛选），返回标题、分数、状态、使用天数和正文摘要。',
+    description: '列出策略（可按主题、问题、状态筛选），返回标题、所属问题、分数、状态、版本、判断标准和正文摘要。status 为 draft 的是草稿。',
     inputSchema: z.object({
       topicId: z.string().optional().describe('只看某个主题'),
+      problemId: z.string().optional().describe('只看某个问题下的候选策略'),
       status: statusEnum.optional().describe('trial=试用中, kept=已留存, eliminated=已淘汰'),
     }),
-    execute: async ({ topicId, status }) => {
+    execute: async ({ topicId, problemId, status }) => {
       let list = topicId ? await db.strategies.where('topicId').equals(topicId).toArray() : await db.strategies.toArray()
-      if (status) list = list.filter((s) => s.status === status)
+      if (problemId) list = list.filter((s) => s.problemId === problemId)
+      if (status) list = list.filter((s) => !s.isDraft && s.status === status)
       return list.map((s) => ({
-        id: s.id, topicId: s.topicId, title: s.title, score: s.score, status: s.isDraft ? 'draft' : s.status,
-        daysInUse: daysSince(s.createdAt), excerpt: excerpt(s.content, 120),
+        id: s.id, topicId: s.topicId, problemId: s.problemId ?? null, title: s.title, score: s.score,
+        status: s.isDraft ? 'draft' : s.status, version: versionOf(s), daysInUse: daysSince(s.createdAt),
+        criteria: s.criteria ?? '', excerpt: excerpt(s.content, 120),
+        ...(s.status === 'eliminated' ? { lesson: s.lesson ?? '' } : {}),
       }))
     },
   }),
 
   get_strategy: tool({
-    description: '读取一个策略的完整 Markdown 正文与复盘记录。',
+    description: '读取一个策略的完整 Markdown 正文、判断标准、演化来源和复盘记录（含执行结果与版本）。',
     inputSchema: z.object({ id: z.string() }),
     execute: async ({ id }) => {
       const s = await mustStrategy(id)
-      const t = await db.topics.get(s.topicId)
+      const [t, p, parent] = await Promise.all([
+        db.topics.get(s.topicId), s.problemId ? db.problems.get(s.problemId) : undefined, s.parentId ? db.strategies.get(s.parentId) : undefined,
+      ])
       const reviews = await db.reviews.where('strategyId').equals(id).sortBy('createdAt')
       return {
-        ...s, topicName: t?.name, createdAt: fmtDate(s.createdAt), updatedAt: fmtDate(s.updatedAt),
-        daysInUse: daysSince(s.createdAt),
+        id: s.id, title: s.title, content: s.content, criteria: s.criteria ?? '', score: s.score,
+        status: s.isDraft ? 'draft' : s.status, version: versionOf(s), lesson: s.lesson ?? '',
+        topicName: t?.name, problem: p?.title ?? null, derivedFrom: parent ? { id: parent.id, title: parent.title } : null,
+        createdAt: fmtDate(s.createdAt), daysInUse: daysSince(s.createdAt),
         reviews: reviews.slice(-30).map((r) => ({
-          at: fmtDate(r.createdAt), delta: r.delta, note: r.note, scoreAfter: r.scoreAfter,
+          at: fmtDate(r.createdAt), version: r.version ?? 1,
+          outcome: r.event ? '开始新版本' : OUTCOME_LABEL[outcomeOf(r)], criteriaMet: r.criteriaMet, note: r.note, scoreAfter: r.scoreAfter,
           statusChange: r.statusChange ? `${STATUS_LABEL[r.statusChange.from]}→${STATUS_LABEL[r.statusChange.to]}` : undefined,
         })),
       }
+    },
+  }),
+
+  list_lessons: tool({
+    description: '读取「踩过的坑」：已淘汰的策略和淘汰原因。出主意前先看，避免重复推荐同类做法。',
+    inputSchema: z.object({ topicId: z.string().optional() }),
+    execute: async ({ topicId }) => {
+      const list = (topicId ? await db.strategies.where('topicId').equals(topicId).toArray() : await db.strategies.toArray())
+        .filter((s) => !s.isDraft && s.status === 'eliminated')
+      return list.map((s) => ({ id: s.id, topicId: s.topicId, problemId: s.problemId ?? null, title: s.title, lesson: s.lesson ?? '', excerpt: excerpt(s.content, 80) }))
     },
   }),
 
@@ -106,59 +159,73 @@ export const tools = {
   }),
 
   create_strategy: tool({
-    description: '在主题下新建策略（状态为试用中，分数 0）。content 为 Markdown 正文。',
+    description: '在主题（最好是某个问题）下新建策略，状态为试用中，分数 0。content 为 Markdown 正文，criteria 写怎么判断有效。',
     inputSchema: z.object({
       topicId: z.string(),
+      problemId: z.string().optional().describe('所属问题 id；没有合适的问题时可先 create_problem'),
       title: z.string().min(1),
       content: z.string().describe('Markdown 正文'),
+      criteria: z.string().describe('怎么判断有效：1-2 个可观察的信号'),
     }),
-    execute: async ({ topicId, title, content }) => {
+    execute: async ({ topicId, problemId, title, content, criteria }) => {
       await mustTopic(topicId)
-      const s = await createStrategy(topicId, title)
-      await updateStrategy(s.id, { content })
+      await checkProblem(problemId, topicId)
+      const s = await createStrategy(topicId, title, { content, criteria, problemId })
       return { id: s.id, title }
     },
   }),
 
   update_strategy: tool({
-    description: '修改策略的标题、Markdown 正文，或移动到其他主题。content 会整体替换原正文。',
+    description: '修改策略的标题、Markdown 正文、判断标准，或移动到其他主题/问题。content 会整体替换原正文。属于小改动，分数保留。',
     inputSchema: z.object({
       id: z.string(),
       title: z.string().min(1).optional(),
       content: z.string().optional().describe('完整的新 Markdown 正文'),
+      criteria: z.string().optional(),
       topicId: z.string().optional(),
+      problemId: z.string().nullable().optional().describe('传 null 表示移到未归类'),
     }),
-    execute: async ({ id, title, content, topicId }) => {
-      await mustStrategy(id)
+    execute: async ({ id, title, content, criteria, topicId, problemId }) => {
+      const s = await mustStrategy(id)
+      const tid = topicId ?? s.topicId
       if (topicId) await mustTopic(topicId)
-      const patch = Object.fromEntries(Object.entries({ title, content, topicId }).filter(([, v]) => v !== undefined))
-      await updateStrategy(id, patch)
-      if (content !== undefined) contentChanged.emit(id)
+      if (problemId) await checkProblem(problemId, tid)
+      await db.strategies.where('id').equals(id).modify((x) => {
+        if (title !== undefined) x.title = title
+        if (content !== undefined) x.content = content
+        if (criteria !== undefined) x.criteria = criteria
+        if (topicId) { x.topicId = topicId; if (problemId === undefined) delete x.problemId }
+        if (problemId === null) delete x.problemId
+        else if (problemId) x.problemId = problemId
+        x.updatedAt = Date.now()
+      })
+      if (content !== undefined || criteria !== undefined || title !== undefined) contentChanged.emit(id)
       return { ok: true }
     },
   }),
 
   add_review: tool({
-    description: '给策略记一次复盘：delta=1 好用，-1 不好用，0 只记录观察。达到主题阈值会自动留存或淘汰。只在用户明确要求打分时调用。',
+    description: '给策略记一次复盘：worked=执行了且有效(+1)，failed=执行了但无效(-1)，skipped=没怎么执行(不计分)，note=只记录观察。达到主题阈值会自动留存或淘汰。只在用户明确要求时调用。',
     inputSchema: z.object({
       id: z.string(),
-      delta: z.union([z.literal(-1), z.literal(0), z.literal(1)]),
+      outcome: z.enum(['worked', 'failed', 'skipped', 'note']),
       note: z.string().describe('复盘备注'),
+      criteriaMet: z.enum(['yes', 'partly', 'no']).optional().describe('对照判断标准是否达到'),
     }),
-    execute: async ({ id, delta, note }) => {
+    execute: async ({ id, outcome, note, criteriaMet }) => {
       await mustStrategy(id)
-      const changed = await addReview(id, delta, note)
+      const changed = await addReview(id, outcome, note, criteriaMet)
       const s = await db.strategies.get(id)
       return { score: s?.score, status: s?.status, statusChanged: changed ?? null }
     },
   }),
 
   set_status: tool({
-    description: '手动改变策略状态（淘汰、留存、恢复试用）。从淘汰恢复时分数归零。只在用户明确要求时调用。',
-    inputSchema: z.object({ id: z.string(), status: statusEnum, note: z.string().optional() }),
-    execute: async ({ id, status, note }) => {
+    description: '手动改变策略状态（淘汰、留存、恢复试用）。从淘汰恢复时分数归零。淘汰时尽量带上 lesson（为什么不行）。只在用户明确要求时调用。',
+    inputSchema: z.object({ id: z.string(), status: statusEnum, note: z.string().optional(), lesson: z.string().optional() }),
+    execute: async ({ id, status, note, lesson }) => {
       await mustStrategy(id)
-      await setStatus(id, status, note || 'AI 助手操作')
+      await setStatus(id, status, note || 'AI 助手操作', status === 'eliminated' ? lesson : undefined)
       return { ok: true }
     },
   }),

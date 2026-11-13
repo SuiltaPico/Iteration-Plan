@@ -10,13 +10,14 @@ export function useLastReviews() {
   return useLiveQuery(lastReviewMap, [], new Map<string, number>())
 }
 
-export default function StrategyCard({ s, topic, showTopic, last }: { s: Strategy; topic?: Topic; showTopic?: boolean; last?: number }) {
+export default function StrategyCard({ s, topic, showTopic, last, problem }: { s: Strategy; topic?: Topic; showTopic?: boolean; last?: number; problem?: string }) {
   const reviewable = !s.isDraft && s.status !== 'eliminated'
   return (
     <article className={`card strategy-card st-${s.isDraft ? 'draft' : s.status}`}>
       <Link to={`/strategy/${s.id}`} className="card-link">
+        {problem && <span className="card-problem">{problem}</span>}
         <div className="card-top">
-          <h3 className="card-title">{s.title || '未命名策略'}</h3>
+          <h3 className="card-title">{s.title || '未命名策略'}{(s.version ?? 1) > 1 && <span className="ver">v{s.version}</span>}</h3>
           {s.isDraft ? <span className="badge badge-draft">草稿</span> : <StatusBadge status={s.status} />}
         </div>
         <p className="card-excerpt">{s.content ? excerpt(s.content) : <span className="muted">还没有内容</span>}</p>

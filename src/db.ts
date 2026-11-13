@@ -16,13 +16,34 @@ export interface Topic {
   updatedAt: number
 }
 
-export interface Strategy {
+/** 主题下要解决的一个具体问题；问题下的策略互为候选解法 */
+export interface Problem {
   id: string
   topicId: string
   title: string
+  description: string
+  order: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface Strategy {
+  id: string
+  topicId: string
+  /** 所属问题；为空时归在「未归类」 */
+  problemId?: string
+  title: string
   content: string
+  /** 怎么判断有效：复盘时对照着回答 */
+  criteria?: string
   score: number
   status: Status
+  /** 版本号，大改后「存为新版本」会 +1 并重新试用；旧数据视为 1 */
+  version?: number
+  /** 演化来源：由哪个策略另存或草稿发布而来 */
+  parentId?: string
+  /** 淘汰原因 / 教训，汇总为主题的「踩过的坑」 */
+  lesson?: string
   createdAt: number
   updatedAt: number
   statusChangedAt: number
@@ -39,8 +60,13 @@ export interface PendingEdit {
   strategyId: string
   title: string
   content: string
+  criteria?: string
   updatedAt: number
 }
+
+/** 复盘结果：执行了且有效 / 执行了但无效 / 没怎么执行 / 只记录观察 */
+export type Outcome = 'worked' | 'failed' | 'skipped' | 'note'
+export type CriteriaMet = 'yes' | 'partly' | 'no'
 
 export interface Review {
   id: string
@@ -49,11 +75,19 @@ export interface Review {
   note: string
   scoreAfter: number
   statusChange?: { from: Status; to: Status }
+  /** 旧记录没有，按 delta 推断 */
+  outcome?: Outcome
+  criteriaMet?: CriteriaMet
+  /** 复盘时策略的版本 */
+  version?: number
+  /** 系统事件（例如开始新版本），不是用户的复盘 */
+  event?: 'new-version'
   createdAt: number
 }
 
 export const db = new Dexie('iteration-plan') as Dexie & {
   topics: EntityTable<Topic, 'id'>
+  problems: EntityTable<Problem, 'id'>
   strategies: EntityTable<Strategy, 'id'>
   reviews: EntityTable<Review, 'id'>
   pending: EntityTable<PendingEdit, 'strategyId'>
@@ -67,6 +101,10 @@ db.version(1).stores({
 db.version(2).stores({
   pending: 'strategyId',
 })
+db.version(3).stores({
+  problems: 'id, topicId, order',
+  strategies: 'id, topicId, problemId, parentId, status, score, updatedAt, createdAt',
+})
 
 export const STATUS_LABEL: Record<Status, string> = {
   trial: '试用中',
@@ -74,9 +112,24 @@ export const STATUS_LABEL: Record<Status, string> = {
   eliminated: '已淘汰',
 }
 
+export const OUTCOME_LABEL: Record<Outcome, string> = {
+  worked: '执行了 · 有效',
+  failed: '执行了 · 无效',
+  skipped: '没怎么执行',
+  note: '只记录',
+}
+export const OUTCOME_DELTA: Record<Outcome, number> = { worked: 1, failed: -1, skipped: 0, note: 0 }
+export const CRITERIA_LABEL: Record<CriteriaMet, string> = { yes: '达到', partly: '部分达到', no: '没达到' }
+
+export const outcomeOf = (r: Review): Outcome => r.outcome ?? (r.delta > 0 ? 'worked' : r.delta < 0 ? 'failed' : 'note')
+export const versionOf = (s: Strategy) => s.version ?? 1
+
 export const TOPIC_COLORS = ['#4f46e5', '#0891b2', '#059669', '#ca8a04', '#ea580c', '#dc2626', '#db2777', '#7c3aed', '#475569']
 
 const uid = () => crypto.randomUUID()
+const DAY = 86400000
+
+/* ---------------- 主题 ---------------- */
 
 export async function createTopic(input: Pick<Topic, 'name' | 'description' | 'color' | 'keepAt' | 'eliminateAt'>) {
   const now = Date.now()
@@ -91,22 +144,58 @@ export async function updateTopic(id: string, patch: Partial<Topic>) {
 }
 
 export async function deleteTopic(id: string) {
-  await db.transaction('rw', db.topics, db.strategies, db.reviews, db.pending, async () => {
+  await db.transaction('rw', [db.topics, db.problems, db.strategies, db.reviews, db.pending], async () => {
     const ids = await db.strategies.where('topicId').equals(id).primaryKeys()
     await db.pending.bulkDelete(ids)
     await db.reviews.where('strategyId').anyOf(ids).delete()
     await db.strategies.bulkDelete(ids)
+    await db.problems.where('topicId').equals(id).delete()
     await db.topics.delete(id)
   })
 }
 
-export async function createStrategy(topicId: string, title = '未命名策略', opts: { content?: string; isDraft?: boolean; draftOf?: string } = {}) {
+/* ---------------- 问题 ---------------- */
+
+export async function createProblem(topicId: string, title: string, description = '') {
+  const now = Date.now()
+  const siblings = await db.problems.where('topicId').equals(topicId).toArray()
+  const p: Problem = {
+    id: uid(), topicId, title, description, createdAt: now, updatedAt: now,
+    order: siblings.reduce((m, x) => Math.max(m, x.order), 0) + 1,
+  }
+  await db.problems.add(p)
+  return p
+}
+
+export async function updateProblem(id: string, patch: Partial<Problem>) {
+  await db.problems.update(id, { ...patch, updatedAt: Date.now() })
+}
+
+/** 删除问题：其下的策略移到「未归类」 */
+export async function deleteProblem(id: string) {
+  await db.transaction('rw', db.problems, db.strategies, async () => {
+    await db.strategies.where('problemId').equals(id).modify((s) => { delete s.problemId })
+    await db.problems.delete(id)
+  })
+}
+
+/* ---------------- 策略 ---------------- */
+
+export async function createStrategy(
+  topicId: string,
+  title = '未命名策略',
+  opts: { content?: string; criteria?: string; problemId?: string; isDraft?: boolean; draftOf?: string; parentId?: string } = {},
+) {
   const now = Date.now()
   const s: Strategy = {
-    id: uid(), topicId, title, content: opts.content ?? '', score: 0, status: 'trial',
+    id: uid(), topicId, title, content: opts.content ?? '', score: 0, status: 'trial', version: 1,
     createdAt: now, updatedAt: now, statusChangedAt: now,
-    ...(opts.isDraft ? { isDraft: true } : {}), ...(opts.draftOf ? { draftOf: opts.draftOf } : {}),
   }
+  if (opts.criteria) s.criteria = opts.criteria
+  if (opts.problemId) s.problemId = opts.problemId
+  if (opts.isDraft) s.isDraft = true
+  if (opts.draftOf) s.draftOf = opts.draftOf
+  if (opts.parentId) s.parentId = opts.parentId
   await db.strategies.add(s)
   return s
 }
@@ -119,6 +208,8 @@ export async function deleteStrategy(id: string) {
   await db.transaction('rw', db.strategies, db.reviews, db.pending, async () => {
     await db.pending.delete(id)
     await db.reviews.where('strategyId').equals(id).delete()
+    // 由它衍生的策略不再指向它
+    await db.strategies.where('parentId').equals(id).modify((s) => { delete s.parentId })
     await db.strategies.delete(id)
   })
 }
@@ -129,20 +220,23 @@ function nextStatus(cur: Status, score: number, t: Topic): Status {
   return cur
 }
 
-/** 复盘打分：记录一次评价，并按主题阈值自动转换状态 */
-export async function addReview(strategyId: string, delta: number, note: string) {
+/** 复盘：按结果计分（有效 +1、无效 −1、没执行和只记录不计分），并按主题阈值自动转换状态 */
+export async function addReview(strategyId: string, outcome: Outcome, note: string, criteriaMet?: CriteriaMet) {
   return db.transaction('rw', db.topics, db.strategies, db.reviews, async () => {
     const s = await db.strategies.get(strategyId)
     if (!s) return
     const t = await db.topics.get(s.topicId)
     if (!t) return
+    const delta = OUTCOME_DELTA[outcome]
     const score = s.score + delta
     const status = nextStatus(s.status, score, t)
     const now = Date.now()
-    await db.reviews.add({
-      id: uid(), strategyId, delta, note, scoreAfter: score, createdAt: now,
-      statusChange: status !== s.status ? { from: s.status, to: status } : undefined,
-    })
+    const r: Review = {
+      id: uid(), strategyId, delta, note, scoreAfter: score, createdAt: now, outcome, version: versionOf(s),
+    }
+    if (criteriaMet) r.criteriaMet = criteriaMet
+    if (status !== s.status) r.statusChange = { from: s.status, to: status }
+    await db.reviews.add(r)
     await db.strategies.update(strategyId, {
       score, status, updatedAt: now, nextAskAt: now + askInterval(status),
       ...(status !== s.status ? { statusChangedAt: now } : {}),
@@ -151,8 +245,8 @@ export async function addReview(strategyId: string, delta: number, note: string)
   })
 }
 
-/** 手动改变状态（淘汰 / 恢复试用 / 直接留存） */
-export async function setStatus(strategyId: string, to: Status, note: string) {
+/** 手动改变状态（淘汰 / 恢复试用 / 直接留存）；淘汰时可以顺便记下教训 */
+export async function setStatus(strategyId: string, to: Status, note: string, lesson?: string) {
   await db.transaction('rw', db.strategies, db.reviews, async () => {
     const s = await db.strategies.get(strategyId)
     if (!s || s.status === to) return
@@ -161,35 +255,75 @@ export async function setStatus(strategyId: string, to: Status, note: string) {
     const now = Date.now()
     await db.reviews.add({
       id: uid(), strategyId, delta: score - s.score, note, scoreAfter: score, createdAt: now,
-      statusChange: { from: s.status, to },
+      statusChange: { from: s.status, to }, outcome: 'note', version: versionOf(s),
     })
-    await db.strategies.update(strategyId, { status: to, score, updatedAt: now, statusChangedAt: now })
+    await db.strategies.update(strategyId, {
+      status: to, score, updatedAt: now, statusChangedAt: now,
+      ...(lesson !== undefined ? { lesson } : {}),
+    })
   })
 }
 
+/** 保存为新版本：内容更新，版本 +1，分数清零重新试用（之前的复盘记录保留，标着旧版本号） */
+export async function saveAsNewVersion(strategyId: string, patch: Pick<Strategy, 'title' | 'content'> & { criteria?: string }) {
+  await db.transaction('rw', db.strategies, db.reviews, db.pending, async () => {
+    const s = await db.strategies.get(strategyId)
+    if (!s) return
+    const now = Date.now()
+    const version = versionOf(s) + 1
+    await db.reviews.add({
+      id: uid(), strategyId, delta: -s.score, note: `开始第 ${version} 版，分数清零重新试用`, scoreAfter: 0,
+      createdAt: now, outcome: 'note', version, event: 'new-version',
+      ...(s.status !== 'trial' ? { statusChange: { from: s.status, to: 'trial' as Status } } : {}),
+    })
+    await db.strategies.update(strategyId, {
+      ...patch, version, score: 0, status: 'trial', statusChangedAt: now, updatedAt: now,
+      nextAskAt: now + askInterval('trial'),
+    })
+    await db.pending.delete(strategyId)
+  })
+}
+
+/** 最近几次（当前版本）复盘里「没怎么执行」的次数，用来提示策略可能太难坚持 */
+export function skippedRecently(s: Strategy, reviews: Review[]) {
+  const mine = reviews
+    .filter((r) => !r.event && (r.version ?? 1) === versionOf(s) && outcomeOf(r) !== 'note')
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 3)
+  return mine.filter((r) => outcomeOf(r) === 'skipped').length
+}
+
+/* ---------------- 备份 ---------------- */
+
 export interface Backup {
   app: 'iteration-plan'
-  version: 1
+  version: 1 | 2
   exportedAt: number
   topics: Topic[]
+  problems?: Problem[]
   strategies: Strategy[]
   reviews: Review[]
 }
 
 export async function exportAll(): Promise<Backup> {
-  const [topics, strategies, reviews] = await Promise.all([db.topics.toArray(), db.strategies.toArray(), db.reviews.toArray()])
-  return { app: 'iteration-plan', version: 1, exportedAt: Date.now(), topics, strategies, reviews }
+  const [topics, problems, strategies, reviews] = await Promise.all([
+    db.topics.toArray(), db.problems.toArray(), db.strategies.toArray(), db.reviews.toArray(),
+  ])
+  return { app: 'iteration-plan', version: 2, exportedAt: Date.now(), topics, problems, strategies, reviews }
 }
 
 export async function importAll(data: Backup) {
   if (data?.app !== 'iteration-plan') throw new Error('不是有效的备份文件')
-  await db.transaction('rw', db.topics, db.strategies, db.reviews, db.pending, async () => {
-    await Promise.all([db.topics.clear(), db.strategies.clear(), db.reviews.clear(), db.pending.clear()])
+  await db.transaction('rw', [db.topics, db.problems, db.strategies, db.reviews, db.pending], async () => {
+    await Promise.all([db.topics.clear(), db.problems.clear(), db.strategies.clear(), db.reviews.clear(), db.pending.clear()])
     await db.topics.bulkAdd(data.topics)
+    await db.problems.bulkAdd(data.problems ?? [])
     await db.strategies.bulkAdd(data.strategies)
     await db.reviews.bulkAdd(data.reviews)
   })
 }
+
+/* ---------------- 草稿 ---------------- */
 
 /** 把一条未保存的修改克隆成草稿策略，并清掉这条修改。返回新草稿（原策略不存在或无实际改动时返回 undefined） */
 export async function pendingToDraft(strategyId: string) {
@@ -198,8 +332,12 @@ export async function pendingToDraft(strategyId: string) {
     if (!p) return
     await db.pending.delete(strategyId)
     const s = await db.strategies.get(strategyId)
-    if (!s || (p.title === s.title && p.content === s.content)) return
-    return createStrategy(s.topicId, `${p.title || s.title}（草稿）`, { content: p.content, isDraft: true, draftOf: s.id })
+    if (!s) return
+    const criteria = p.criteria ?? s.criteria ?? ''
+    if (p.title === s.title && p.content === s.content && criteria === (s.criteria ?? '')) return
+    return createStrategy(s.topicId, `${p.title || s.title}（草稿）`, {
+      content: p.content, criteria, problemId: s.problemId, isDraft: true, draftOf: s.id,
+    })
   })
 }
 
@@ -210,10 +348,16 @@ export async function convertAllPending() {
   return ids.length
 }
 
-/** 草稿发布为正式策略（开始试用，分数从 0 起） */
+/** 草稿发布为正式策略（开始试用，分数从 0 起）；如果是从某个策略改来的，记下演化关系 */
 export async function publishDraft(id: string) {
   const now = Date.now()
-  await db.strategies.update(id, { isDraft: false, draftOf: undefined, score: 0, status: 'trial', createdAt: now, statusChangedAt: now, updatedAt: now })
+  await db.strategies.where('id').equals(id).modify((s) => {
+    if (s.draftOf) s.parentId = s.draftOf
+    delete s.draftOf
+    s.isDraft = false
+    s.title = s.title.replace(/（草稿）$/, '')
+    Object.assign(s, { score: 0, status: 'trial', version: 1, createdAt: now, statusChangedAt: now, updatedAt: now })
+  })
 }
 
 /** 用草稿内容覆盖原策略，并删除草稿 */
@@ -223,21 +367,26 @@ export async function mergeDraftIntoOriginal(draftId: string) {
     if (!d?.draftOf) return
     const orig = await db.strategies.get(d.draftOf)
     if (!orig) return
-    await db.strategies.update(orig.id, { title: d.title.replace(/（草稿）$/, ''), content: d.content, updatedAt: Date.now() })
+    await db.strategies.update(orig.id, {
+      title: d.title.replace(/（草稿）$/, ''), content: d.content, criteria: d.criteria, updatedAt: Date.now(),
+    })
     await db.pending.delete(orig.id)
     await deleteStrategy(draftId)
     return orig.id
   })
 }
 
+/* ---------------- 问一问 ---------------- */
+
 /** 每个策略最近一次复盘时间 */
 export async function lastReviewMap() {
   const m = new Map<string, number>()
-  await db.reviews.each((r) => { if ((m.get(r.strategyId) ?? 0) < r.createdAt) m.set(r.strategyId, r.createdAt) })
+  await db.reviews.each((r) => {
+    if (!r.event && (m.get(r.strategyId) ?? 0) < r.createdAt) m.set(r.strategyId, r.createdAt)
+  })
   return m
 }
 
-const DAY = 86400000
 /** 多久问一次：试用中的策略 7 天，已留存的 30 天 */
 export const askInterval = (st: Status) => (st === 'kept' ? 30 : 7) * DAY
 /** 该不该主动问一问这个策略（last = 最近一次复盘时间） */

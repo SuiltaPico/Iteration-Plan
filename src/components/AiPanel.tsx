@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import type { ModelMessage } from 'ai'
-import { db, STATUS_LABEL, type Status } from '../db'
+import { db, OUTCOME_LABEL, STATUS_LABEL, type Outcome, type Status } from '../db'
 import { flushEditors, openAi } from '../bus'
 import { isConfigured, loadSettings, onSettings } from '../ai/settings'
 import { errorText, runAgent, type PageContext } from '../ai/agent'
@@ -25,8 +25,8 @@ function usePageContext(): PageContext {
 
 function suggestions(ctx: PageContext) {
   if (ctx.strategyId) return ['帮我完善这个策略的正文，补充具体做法和判断有效的标准', '把这个策略改写得更具体、更容易执行', '根据复盘记录，这个策略该怎么调整？']
-  if (ctx.topicId) return ['为当前主题再想 3 个新策略', '分析当前主题的策略和复盘记录，给我改进建议', '把当前主题里分数最高的策略总结成一份清单']
-  return ['我想改善睡眠质量，帮我建个主题并写 4 个策略', '看看我所有的策略，给我复盘建议', '哪些策略试用很久了还没复盘？']
+  if (ctx.topicId) return ['帮我梳理这个主题里值得解决的问题，并各给 2 个候选策略', '分析当前主题的策略、复盘和踩过的坑，给我改进建议', '哪些策略一直没怎么执行？帮我简化']
+  return ['我想在投资上找到适合自己的卖出方法，帮我建主题、问题和候选策略', '看看我所有的策略，给我复盘建议', '哪些策略试用很久了还没复盘？']
 }
 
 export default function AiPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -171,12 +171,16 @@ function ToolChip({ p }: { p: ToolPart }) {
   switch (p.name) {
     case 'list_topics': label = '查看主题列表'; break
     case 'list_strategies': label = '查看策略列表'; break
+    case 'list_problems': label = '查看问题列表'; break
+    case 'list_lessons': label = '查看踩过的坑'; break
+    case 'create_problem': label = <>新建问题「{p.input?.title}」</>; break
+    case 'update_problem': label = '修改问题'; break
     case 'get_strategy': label = <>读取策略{title && <>「{title}」</>}</>; break
     case 'create_topic': label = p.output?.id ? <>创建主题 <Link to={`/topic/${p.output.id}`}>「{p.input.name}」</Link></> : <>创建主题「{p.input?.name}」</>; break
     case 'update_topic': label = '修改主题'; break
     case 'create_strategy': label = p.output?.id ? <>创建策略 <Link to={`/strategy/${p.output.id}`}>「{title}」</Link></> : <>创建策略「{title}」</>; break
     case 'update_strategy': label = <>更新策略 {sid ? <Link to={`/strategy/${sid}`}>「{title}」</Link> : null}</>; break
-    case 'add_review': label = <>复盘 {p.input?.delta > 0 ? '+1' : p.input?.delta < 0 ? '−1' : '记录'}「{title}」{p.output?.statusChanged && <b> → {STATUS_LABEL[p.output.statusChanged as Status]}</b>}</>; break
+    case 'add_review': label = <>复盘「{title}」：{OUTCOME_LABEL[p.input?.outcome as Outcome] ?? ''}{p.output?.statusChanged && <b> → {STATUS_LABEL[p.output.statusChanged as Status]}</b>}</>; break
     case 'set_status': label = <>「{title}」改为{STATUS_LABEL[p.input?.status as Status] ?? ''}</>; break
     case 'delete_strategy': label = <>删除策略「{p.output?.title ?? ''}」</>; break
     default: label = p.name
