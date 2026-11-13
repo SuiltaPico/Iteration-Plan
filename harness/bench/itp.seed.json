@@ -1,0 +1,5 @@
+{ "strategies": [
+  { "id": "s1", "status": "kept",  "by": "human", "title": "动手前先用一句话复述完成标准和目标" },
+  { "id": "s2", "status": "trial", "by": "human", "title": "先观察至少一个完整的涨跌周期，再下第一笔交易" },
+  { "id": "s3", "status": "trial", "by": "human", "title": "第一天全仓买入，一直持有到最后，省事且不亏手续费" } ],
+  "logs": [] }
