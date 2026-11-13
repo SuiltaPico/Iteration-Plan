@@ -28,8 +28,6 @@ export default function Overview() {
   if (!topics || !strategies) return null
 
   const real = strategies.filter((s) => !s.isDraft)
-  const stat = { trial: 0, kept: 0, eliminated: 0 }
-  real.forEach((s) => stat[s.status]++)
   const topicMap = new Map(topics.map((t) => [t.id, t]))
 
   const query = q.trim().toLowerCase()
@@ -58,11 +56,6 @@ export default function Overview() {
       <header className="page-head">
         <div className="head-text">
           <h1>总览</h1>
-          <div className="stat-row">
-            <span><b>{stat.trial}</b> 试用中</span>
-            <span><b>{stat.kept}</b> 已留存</span>
-            <span><b>{stat.eliminated}</b> 已淘汰</span>
-          </div>
         </div>
         <div className="head-actions">
           <input className="search" placeholder="搜索策略…" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -84,16 +77,11 @@ export default function Overview() {
             {topics.map((t) => {
               const all = byTopic.get(t.id) ?? []
               const list = all.filter((s) => !s.isDraft && s.status !== 'eliminated').sort((a, b) => b.score - a.score)
-              const drafts = all.filter((s) => s.isDraft).length
-              const elim = all.filter((s) => !s.isDraft && s.status === 'eliminated').length
               return (
                 <section key={t.id} className="board">
                   <Link to={`/topic/${t.id}`} className="board-head">
                     <span className="dot" style={{ background: t.color }} />
                     <h2>{t.name}</h2>
-                    <span className="muted sm">
-                      {list.length} 个在用{elim ? ` · ${elim} 个已淘汰` : ''}{drafts ? ` · ${drafts} 份草稿` : ''}
-                    </span>
                     <span className="arrow">→</span>
                   </Link>
                   {t.description && <p className="board-desc">{t.description}</p>}

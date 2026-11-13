@@ -8,15 +8,10 @@ import { openAi } from '../bus'
 
 export default function Sidebar({ onNavigate }: { onNavigate: () => void }) {
   const topics = useLiveQuery(() => db.topics.orderBy('order').toArray(), [])
-  const strategies = useLiveQuery(() => db.strategies.toArray(), [])
   const [creating, setCreating] = useState(false)
   const [backup, setBackup] = useState(false)
   const navigate = useNavigate()
 
-  const counts = new Map<string, number>()
-  strategies?.forEach((s) => {
-    if (s.status !== 'eliminated' && !s.isDraft) counts.set(s.topicId, (counts.get(s.topicId) ?? 0) + 1)
-  })
 
   return (
     <aside className="sidebar">
@@ -36,7 +31,6 @@ export default function Sidebar({ onNavigate }: { onNavigate: () => void }) {
           <NavLink key={t.id} to={`/topic/${t.id}`} className="nav-item">
             <span className="dot" style={{ background: t.color }} />
             <span className="nav-name">{t.name}</span>
-            <span className="nav-count">{counts.get(t.id) ?? 0}</span>
           </NavLink>
         ))}
         {topics?.length === 0 && (
