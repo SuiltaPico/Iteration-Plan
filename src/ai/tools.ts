@@ -1,13 +1,20 @@
 import { tool } from 'ai'
 import { z } from 'zod'
 import {
-  addLog, addReview, createProblem, LOG_RESULT_LABEL, createStrategy, createTopic, db, deleteStrategy, OUTCOME_LABEL, outcomeOf, setStatus,
+  addIdea, addLog, addPrediction, addReview, createProblem, fmtMetric, LOG_RESULT_LABEL, metricStat, newMetricId, PREDICTION_LABEL, versionSince, createStrategy, createTopic, db, deleteStrategy, OUTCOME_LABEL, outcomeOf, setStatus,
   getProfile, setProfile, STATUS_LABEL, TOPIC_COLORS, updateProblem, updateTopic, versionOf,
 } from '../db'
 import { contentChanged } from '../bus'
 import { daysSince, excerpt, fmtDate } from '../util'
 
 const statusEnum = z.enum(['trial', 'kept', 'eliminated'])
+const metricSchema = z.object({
+  name: z.string().min(1),
+  unit: z.string().describe('单位，如 元、小时、分钟、%'),
+  agg: z.enum(['sum', 'avg']).describe('sum 看累计（如盈亏），avg 看平均（如用时）'),
+  better: z.enum(['higher', 'lower']),
+  baseline: z.number().optional().describe('不用任何策略时的水平'),
+})
 
 async function mustStrategy(id: string) {
   const s = await db.strategies.get(id)
@@ -45,30 +52,34 @@ export const tools = {
   }),
 
   list_problems: tool({
-    description: '列出某个主题下的问题。问题是主题里要解决的具体事情，问题下的策略互为候选解法。',
+    description: '列出某个主题下的问题（含指标定义）。问题是主题里要解决的具体事情，问题下的策略互为候选解法，用问题的指标比较。',
     inputSchema: z.object({ topicId: z.string() }),
     execute: async ({ topicId }) => {
       const problems = await db.problems.where('topicId').equals(topicId).sortBy('order')
-      return problems.map((p) => ({ id: p.id, title: p.title, description: p.description }))
+      return problems.map((p) => ({ id: p.id, title: p.title, description: p.description, metrics: p.metrics ?? [] }))
     },
   }),
 
   create_problem: tool({
-    description: '在主题下新建一个问题。',
-    inputSchema: z.object({ topicId: z.string(), title: z.string().min(1), description: z.string().optional() }),
-    execute: async ({ topicId, title, description }) => {
+    description: '在主题下新建一个问题，可附带指标（用来比较候选策略，如 盈亏/元/累计/越大越好、用时/小时/平均/越小越好）。',
+    inputSchema: z.object({ topicId: z.string(), title: z.string().min(1), description: z.string().optional(), metrics: z.array(metricSchema).optional() }),
+    execute: async ({ topicId, title, description, metrics }) => {
       await mustTopic(topicId)
       const p = await createProblem(topicId, title, description ?? '')
+      if (metrics?.length) await updateProblem(p.id, { metrics: metrics.map((m) => ({ ...m, id: newMetricId() })) })
       return { id: p.id, title: p.title }
     },
   }),
 
   update_problem: tool({
-    description: '修改问题的标题或说明。',
-    inputSchema: z.object({ id: z.string(), title: z.string().min(1).optional(), description: z.string().optional() }),
-    execute: async ({ id, ...patch }) => {
-      if (!(await db.problems.get(id))) throw new Error(`问题 ${id} 不存在`)
-      await updateProblem(id, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)))
+    description: '修改问题的标题、说明，或新增指标（不会删除或改动已有指标）。',
+    inputSchema: z.object({ id: z.string(), title: z.string().min(1).optional(), description: z.string().optional(), addMetrics: z.array(metricSchema).optional() }),
+    execute: async ({ id, addMetrics, ...patch }) => {
+      const p = await db.problems.get(id)
+      if (!p) throw new Error(`问题 ${id} 不存在`)
+      const next: Record<string, unknown> = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
+      if (addMetrics?.length) next.metrics = [...(p.metrics ?? []), ...addMetrics.map((m) => ({ ...m, id: newMetricId() }))]
+      await updateProblem(id, next)
       return { ok: true }
     },
   }),
@@ -103,14 +114,21 @@ export const tools = {
       ])
       const reviews = await db.reviews.where('strategyId').equals(id).sortBy('createdAt')
       const logs = await db.logs.where('strategyId').equals(id).sortBy('createdAt')
+      const metrics = p?.metrics ?? []
+      const since = versionSince(s, reviews)
+      const mname = new Map(metrics.map((m) => [m.id, m.name]))
       return {
         id: s.id, title: s.title, content: s.content, criteria: s.criteria ?? '', score: s.score,
         status: s.isDraft ? 'draft' : s.status, version: versionOf(s), lesson: s.lesson ?? '',
         topicName: t?.name, problem: p?.title ?? null, derivedFrom: parent ? { id: parent.id, title: parent.title } : null,
         createdAt: fmtDate(s.createdAt), daysInUse: daysSince(s.createdAt),
-        usageLogs: logs.slice(-30).map((l) => ({ at: fmtDate(l.createdAt), result: l.result ? LOG_RESULT_LABEL[l.result] : undefined, note: l.note })),
+        metrics: metrics.map((m) => { const st = metricStat(m, logs, since); return { name: m.name, agg: m.agg, better: m.better, baseline: m.baseline, value: st.value === null ? null : fmtMetric(st.value, m), count: st.n } }),
+        usageLogs: logs.slice(-40).map((l) => ({
+          at: fmtDate(l.createdAt), result: l.result ? LOG_RESULT_LABEL[l.result] : undefined, note: l.note, tags: l.tags, emoji: l.emoji,
+          values: l.values ? Object.fromEntries(Object.entries(l.values).map(([k, v]) => [mname.get(k) ?? k, v])) : undefined,
+        })),
         reviews: reviews.slice(-30).map((r) => ({
-          at: fmtDate(r.createdAt), version: r.version ?? 1,
+          at: fmtDate(r.createdAt), version: r.version ?? 1, emoji: r.emoji,
           outcome: r.event ? '开始新版本' : OUTCOME_LABEL[outcomeOf(r)], criteriaMet: r.criteriaMet, note: r.note, scoreAfter: r.scoreAfter,
           statusChange: r.statusChange ? `${STATUS_LABEL[r.statusChange.from]}→${STATUS_LABEL[r.statusChange.to]}` : undefined,
         })),
@@ -249,16 +267,67 @@ export const tools = {
   }),
 
   add_log: tool({
-    description: '记一笔使用记录：用户某次实际用了这个策略，当时的情况和结果。不计分。用户描述了一次具体使用经历时调用。',
+    description: '记一笔使用记录：用户某次实际用了这个策略，当时的情况、结果、指标数值和情境。不计分。用户描述了一次具体使用经历时调用。',
     inputSchema: z.object({
       id: z.string(),
       note: z.string().min(1),
       result: z.enum(['good', 'meh', 'bad']).optional().describe('good=顺利 meh=一般 bad=不理想'),
+      values: z.record(z.string(), z.number()).optional().describe('指标数值，键为指标名称或 id，例如 {"盈亏": -120}'),
+      tags: z.array(z.string()).optional().describe('情境标签，优先沿用这个主题已有的标签'),
     }),
-    execute: async ({ id, note, result }) => {
-      await mustStrategy(id)
-      await addLog(id, note, result)
+    execute: async ({ id, note, result, values, tags }) => {
+      const s = await mustStrategy(id)
+      const metrics = (s.problemId ? (await db.problems.get(s.problemId))?.metrics : undefined) ?? []
+      const vals: Record<string, number> = {}
+      for (const [k, v] of Object.entries(values ?? {})) {
+        const m = metrics.find((x) => x.id === k || x.name === k)
+        if (!m) throw new Error(`这个策略所属问题没有指标「${k}」，可用的有：${metrics.map((x) => x.name).join('、') || '无'}`)
+        vals[m.id] = v
+      }
+      await addLog(id, note, result, { values: vals, tags })
       return { ok: true }
+    },
+  }),
+
+  list_ideas: tool({
+    description: '读取想法池：还没开始试的做法（一句话和来源）。',
+    inputSchema: z.object({ topicId: z.string() }),
+    execute: async ({ topicId }) => (await db.ideas.where('topicId').equals(topicId).toArray()).map((x) => ({ id: x.id, problemId: x.problemId ?? null, text: x.text, source: x.source })),
+  }),
+
+  add_idea: tool({
+    description: '往想法池里记一个值得以后试的做法（一句话 + 来源），不直接建策略。联网查到但还不确定要不要试的做法适合放这里。',
+    inputSchema: z.object({ topicId: z.string(), problemId: z.string().optional(), text: z.string().min(1), source: z.string().optional().describe('书名、链接或出处') }),
+    execute: async ({ topicId, problemId, text, source }) => {
+      await mustTopic(topicId)
+      await checkProblem(problemId, topicId)
+      const x = await addIdea(topicId, text, { problemId, source })
+      return { id: x.id }
+    },
+  }),
+
+  list_predictions: tool({
+    description: '读取预测记录：用户写下的预期、把握（%）和到期后的结果，用来分析判断是否偏自信。',
+    inputSchema: z.object({ topicId: z.string().optional() }),
+    execute: async ({ topicId }) => {
+      const list = topicId ? await db.predictions.where('topicId').equals(topicId).toArray() : await db.predictions.toArray()
+      return list.map((p) => ({
+        statement: p.statement, confidence: p.confidence, topicId: p.topicId, due: p.dueAt ? fmtDate(p.dueAt).slice(0, 10) : undefined,
+        outcome: p.outcome ? PREDICTION_LABEL[p.outcome] : '待验证', note: p.resolvedNote,
+      }))
+    },
+  }),
+
+  add_prediction: tool({
+    description: '帮用户写下一条预测：具体到能判断对错的预期、把握（50~99）、见分晓的日期。用户要做重要决定、或明确说出预期时可以建议并记录。',
+    inputSchema: z.object({
+      statement: z.string().min(1), confidence: z.number().int().min(50).max(99),
+      due: z.string().optional().describe('YYYY-MM-DD'), topicId: z.string().optional(),
+    }),
+    execute: async ({ statement, confidence, due, topicId }) => {
+      if (topicId) await mustTopic(topicId)
+      const p = await addPrediction({ statement, confidence, topicId, dueAt: due ? new Date(`${due}T23:59:00`).getTime() : undefined })
+      return { id: p.id }
     },
   }),
 

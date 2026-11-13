@@ -29,6 +29,9 @@ export default function Sidebar({ onNavigate }: { onNavigate: () => void }) {
         <NavLink to="/me" className="nav-item">
           <span className="nav-icon">◇</span>关于我
         </NavLink>
+        <NavLink to="/predictions" className="nav-item">
+          <span className="nav-icon">△</span>预测
+        </NavLink>
         <div className="nav-section">
           <span>主题</span>
           <button className="icon-btn" title="新建主题" onClick={(e) => { e.stopPropagation(); setCreating(true) }}>＋</button>

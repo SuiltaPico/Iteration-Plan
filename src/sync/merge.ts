@@ -42,6 +42,8 @@ export function mergeBackups(local: Backup, remote: Backup | null): Backup {
     reviews: mergeTable(local.reviews, remote.reviews, dead('reviews')).filter((r) => sids.has(r.strategyId)),
     logs: mergeTable(local.logs, remote.logs, dead('logs')).filter((l) => sids.has(l.strategyId)),
     meta: mergeTable(local.meta, remote.meta, dead('meta')),
+    predictions: mergeTable(local.predictions, remote.predictions, dead('predictions')),
+    ideas: mergeTable(local.ideas, remote.ideas, dead('ideas')).filter((x) => topicIds.has(x.topicId)),
     tombstones: [...tomb.values()],
   }
 }
@@ -50,7 +52,7 @@ export function mergeBackups(local: Backup, remote: Backup | null): Backup {
 export function sameData(a: Backup, b: Backup | null) {
   if (!b) return false
   const norm = (x: Backup) => JSON.stringify(
-    (['topics', 'problems', 'strategies', 'reviews', 'logs', 'meta', 'tombstones'] as const).map((k) =>
+    (['topics', 'problems', 'strategies', 'reviews', 'logs', 'meta', 'tombstones', 'predictions', 'ideas'] as const).map((k) =>
       [...((x[k] ?? []) as Rec[])].sort((p, q) => (keyOf(p) < keyOf(q) ? -1 : 1)),
     ),
   )

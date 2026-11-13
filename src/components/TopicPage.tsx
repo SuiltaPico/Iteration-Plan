@@ -2,12 +2,13 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
-  createProblem, createStrategy, db, deleteProblem, deleteTopic, updateProblem, updateStrategy,
-  type Problem, type Strategy, type Topic,
+  createProblem, createStrategy, db, deleteProblem, deleteTopic, newMetricId, updateProblem, updateStrategy,
+  type Idea, type Metric, type Problem, type Review, type Strategy, type Topic, type UsageLog,
 } from '../db'
 import StrategyCard, { useLastReviews } from './StrategyCard'
 import TopicDialog from './TopicDialog'
 import Menu from './Menu'
+import { IdeaBox, ProblemCompare } from './ProblemExtras'
 import { confirmDialog } from './Dialogs'
 import { openAi } from '../bus'
 import { fmtDate } from '../util'
@@ -30,6 +31,10 @@ export default function TopicPage() {
   const topic = useLiveQuery(() => db.topics.get(id).then((x) => x ?? null), [id])
   const problems = useLiveQuery(() => db.problems.where('topicId').equals(id).sortBy('order'), [id])
   const strategies = useLiveQuery(() => db.strategies.where('topicId').equals(id).toArray(), [id])
+  const ideas = useLiveQuery(() => db.ideas.where('topicId').equals(id).sortBy('createdAt'), [id]) ?? []
+  const sids = strategies?.map((s) => s.id).join(',') ?? ''
+  const logs = useLiveQuery(() => db.logs.where('strategyId').anyOf(sids ? sids.split(',') : []).toArray(), [sids]) ?? []
+  const reviews = useLiveQuery(() => db.reviews.where('strategyId').anyOf(sids ? sids.split(',') : []).toArray(), [sids]) ?? []
   const [editing, setEditing] = useState(false)
   const [problemDialog, setProblemDialog] = useState<Problem | 'new' | null>(null)
 
@@ -82,6 +87,7 @@ export default function TopicPage() {
 
       {view === 'strategies' && (
         <StrategiesView topic={topic} problems={problems} strategies={strategies} eliminatedCount={eliminated.length}
+          ideas={ideas} logs={logs} reviews={reviews}
           onAdd={addStrategy} onNewProblem={() => setProblemDialog('new')} onEditProblem={(p) => setProblemDialog(p)}
           onLessons={() => setParams({ view: 'lessons' }, { replace: true })} />
       )}
@@ -98,8 +104,8 @@ export default function TopicPage() {
 
 /* ---------------- 策略：按问题分组的候选策略 ---------------- */
 
-function StrategiesView({ topic, problems, strategies, eliminatedCount, onAdd, onNewProblem, onEditProblem, onLessons }: {
-  topic: Topic; problems: Problem[]; strategies: Strategy[]; eliminatedCount: number
+function StrategiesView({ topic, problems, strategies, eliminatedCount, ideas, logs, reviews, onAdd, onNewProblem, onEditProblem, onLessons }: {
+  topic: Topic; problems: Problem[]; strategies: Strategy[]; eliminatedCount: number; ideas: Idea[]; logs: UsageLog[]; reviews: Review[]
   onAdd: (problemId?: string) => void; onNewProblem: () => void; onEditProblem: (p: Problem) => void; onLessons: () => void
 }) {
   const last = useLastReviews()
@@ -150,11 +156,13 @@ function StrategiesView({ topic, problems, strategies, eliminatedCount, onAdd, o
             {winner && rivals.length > 0 && (
               <p className="problem-note">「{winner.title}」已经留存。其他候选还在试用，比较一下要不要让它们退场。</p>
             )}
+            <ProblemCompare problem={p} strategies={strategies.filter((s) => s.problemId === p.id)} logs={logs} reviews={reviews} />
             {list.length ? (
               <div className="grid">{list.map((s) => <StrategyCard key={s.id} s={s} topic={topic} last={last.get(s.id)} />)}</div>
             ) : (
               <button className="empty-line add-line" onClick={() => onAdd(p.id)}>还没有候选策略，写一个</button>
             )}
+            <IdeaBox topicId={topic.id} problemId={p.id} ideas={ideas.filter((x) => x.problemId === p.id)} />
           </section>
         )
       })}
@@ -169,6 +177,13 @@ function StrategiesView({ topic, problems, strategies, eliminatedCount, onAdd, o
             <button className="btn sm" onClick={() => onAdd()}>＋ 策略</button>
           </div>
           <div className="grid">{loose.map((s) => <StrategyCard key={s.id} s={s} topic={topic} last={last.get(s.id)} />)}</div>
+        </section>
+      )}
+
+      {ideas.some((x) => !x.problemId || !problems.some((p) => p.id === x.problemId)) && (
+        <section className="problem">
+          <div className="problem-head"><div className="problem-title"><h2 className="muted">其他想法</h2></div></div>
+          <IdeaBox topicId={topic.id} ideas={ideas.filter((x) => !x.problemId || !problems.some((p) => p.id === x.problemId))} />
         </section>
       )}
 
@@ -260,19 +275,31 @@ function LessonsView({ problems, strategies }: { problems: Problem[]; strategies
 
 /* ---------------- 问题弹窗 ---------------- */
 
+const METRIC_PRESETS: { label: string; m: Omit<Metric, 'id'> }[] = [
+  { label: '盈亏（元，看累计）', m: { name: '盈亏', unit: '元', agg: 'sum', better: 'higher' } },
+  { label: '用时（小时，看平均）', m: { name: '用时', unit: '小时', agg: 'avg', better: 'lower' } },
+]
+
 function ProblemDialog({ topicId, problem, onClose }: { topicId: string; problem?: Problem; onClose: () => void }) {
   const [title, setTitle] = useState(problem?.title ?? '')
   const [description, setDescription] = useState(problem?.description ?? '')
+  const [metrics, setMetrics] = useState<Metric[]>(problem?.metrics ?? [])
+  const setM = (i: number, patch: Partial<Metric>) => setMetrics(metrics.map((m, j) => (j === i ? { ...m, ...patch } : m)))
+  const valid = title.trim() && metrics.every((m) => m.name.trim())
   async function save(e: React.FormEvent) {
     e.preventDefault()
-    if (!title.trim()) return
-    if (problem) await updateProblem(problem.id, { title: title.trim(), description: description.trim() })
-    else await createProblem(topicId, title.trim(), description.trim())
+    if (!valid) return
+    const ms = metrics.map((m) => ({ ...m, name: m.name.trim(), unit: m.unit.trim() }))
+    if (problem) await updateProblem(problem.id, { title: title.trim(), description: description.trim(), metrics: ms })
+    else {
+      const p = await createProblem(topicId, title.trim(), description.trim())
+      if (ms.length) await updateProblem(p.id, { metrics: ms })
+    }
     onClose()
   }
   return (
     <div className="modal-bg" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <form className="modal" onSubmit={save}>
+      <form className="modal wide" onSubmit={save}>
         <h2>{problem ? '编辑问题' : '新问题'}</h2>
         <label className="field">
           <span>要解决的问题</span>
@@ -282,9 +309,37 @@ function ProblemDialog({ topicId, problem, onClose }: { topicId: string; problem
           <span>补充说明（可选）</span>
           <textarea id="problem-desc" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="现在的困扰、约束条件" />
         </label>
+        <div className="field">
+          <span>指标（可选）：用同一把尺子比较这个问题下的候选策略</span>
+          {metrics.map((m, i) => (
+            <div key={m.id} className="metric-edit">
+              <input id={`metric-name-${i}`} value={m.name} onChange={(e) => setM(i, { name: e.target.value })} placeholder="名称，如 盈亏" />
+              <input id={`metric-unit-${i}`} value={m.unit} onChange={(e) => setM(i, { unit: e.target.value })} placeholder="单位" className="unit" />
+              <select className="select" value={m.agg} onChange={(e) => setM(i, { agg: e.target.value as Metric['agg'] })}>
+                <option value="sum">看累计</option>
+                <option value="avg">看平均</option>
+              </select>
+              <select className="select" value={m.better} onChange={(e) => setM(i, { better: e.target.value as Metric['better'] })}>
+                <option value="higher">越大越好</option>
+                <option value="lower">越小越好</option>
+              </select>
+              <input id={`metric-base-${i}`} type="number" value={m.baseline ?? ''} placeholder="基线"
+                title="没用任何策略时的水平（可选）" className="unit"
+                onChange={(e) => setM(i, { baseline: e.target.value === '' ? undefined : Number(e.target.value) })} />
+              <button type="button" className="icon-btn" title="删除这个指标" onClick={() => setMetrics(metrics.filter((_, j) => j !== i))}>×</button>
+            </div>
+          ))}
+          <div className="row-btns">
+            {METRIC_PRESETS.map((p) => (
+              <button type="button" key={p.label} className="btn sm" onClick={() => setMetrics([...metrics, { ...p.m, id: newMetricId() }])}>＋ {p.label}</button>
+            ))}
+            <button type="button" className="btn sm ghost" onClick={() => setMetrics([...metrics, { id: newMetricId(), name: '', unit: '', agg: 'avg', better: 'higher' }])}>＋ 自定义</button>
+          </div>
+          <small className="muted">记一笔时可以顺手填数值；问题下会并排显示每个候选的表现，基线是「不用任何策略时」的水平。</small>
+        </div>
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onClose}>取消</button>
-          <button type="submit" className="btn primary" disabled={!title.trim()}>{problem ? '保存' : '创建'}</button>
+          <button type="submit" className="btn primary" disabled={!valid}>{problem ? '保存' : '创建'}</button>
         </div>
       </form>
     </div>
