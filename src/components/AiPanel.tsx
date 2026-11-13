@@ -174,6 +174,13 @@ function ToolChip({ p }: { p: ToolPart }) {
     case 'list_problems': label = '查看问题列表'; break
     case 'list_lessons': label = '查看踩过的坑'; break
     case 'get_profile': label = '读取「关于我」'; break
+    case 'web_search': label = <>搜索「{p.input?.query}」{Array.isArray(p.output?.results) && <span className="muted"> · {p.output.results.length} 条结果</span>}</>; break
+    case 'web_fetch': {
+      let host = String(p.input?.url ?? '')
+      try { host = new URL(host).hostname } catch { /* 原样显示 */ }
+      label = <>读取网页 <a href={p.input?.url} target="_blank" rel="noreferrer">{p.output?.title || host}</a></>
+      break
+    }
     case 'update_profile': label = <>更新 <Link to="/me">「关于我」</Link></>; break
     case 'add_log': label = <>记一笔「{title}」</>; break
     case 'create_problem': label = <>新建问题「{p.input?.title}」</>; break

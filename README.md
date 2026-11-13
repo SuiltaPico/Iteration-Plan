@@ -51,4 +51,6 @@ npm run build    # 构建到 dist/，可直接部署到任意静态托管（如 
 | API Key | 只保存在当前浏览器的 localStorage |
 | 模型 | 需支持工具调用，例如 `claude-opus-5-5`、`deepseek-chat` |
 
+**联网**：在 AI 设置里打开「联网」，AI 就能用 [DeepSeek 的 Search / Fetch API](https://api-docs.deepseek.com/guides/search/) 搜索网页、读取网页正文（找成熟做法、核实依据，引用时附来源）。主模型用哪家都行，联网走 DeepSeek，需要 DeepSeek API Key（主接口就是 DeepSeek 时可沿用同一个 Key），按次计费。
+
 请求由浏览器直接发给你填写的地址（基于 [Vercel AI SDK](https://ai-sdk.dev)，纯前端，无需后端）。部分服务商或中转不允许浏览器跨域调用，此时会提示无法连接，换一个支持浏览器访问的地址即可。

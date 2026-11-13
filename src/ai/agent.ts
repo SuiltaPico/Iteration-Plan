@@ -1,7 +1,8 @@
 import { APICallError, generateText, stepCountIs, streamText, type LanguageModel, type ModelMessage } from 'ai'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
-import type { AiSettings } from './settings'
+import { webKeyOf, type AiSettings } from './settings'
+import { webTools } from './web'
 import { tools } from './tools'
 import { db, getProfile } from '../db'
 
@@ -41,7 +42,7 @@ async function describeContext(ctx: PageContext) {
   return '用户正在总览页。'
 }
 
-async function systemPrompt(ctx: PageContext) {
+async function systemPrompt(ctx: PageContext, web: boolean) {
   const today = new Date().toISOString().slice(0, 10)
   return `你是「迭代策略」应用里的 AI 助手，帮用户管理个人策略。今天是 ${today}。
 
@@ -68,7 +69,8 @@ async function systemPrompt(ctx: PageContext) {
 - 提炼「关于我」时：读各主题的踩过的坑（list_lessons）、复盘里的「没怎么执行」、使用记录和留存的策略，归纳 3~8 条跨主题的规律，每条写清依据（来自哪些策略或教训）；保留用户自己写的内容，用 update_profile 写回。
 - 用户请你判断去留（例如「这个问题下留谁」「帮我决定」）时：读每个候选当前版本的复盘结果、判断标准是否达到、使用记录和「关于我」，逐个给出结论和依据；结论明确的直接用 set_status 执行（note 写依据，淘汰时写 lesson），拿不准的说明还缺什么证据、建议继续试用多久。用户只是问看法时只给建议、不执行。
 - 打分（add_review）和删除（delete_strategy）只在用户明确要求时执行。
-- 用中文回复。完成操作后用一两句话说明做了什么，不要复述整篇正文。
+- 用中文回复。完成操作后用一两句话说明做了什么，不要复述整篇正文。${web ? `
+- 你可以联网：web_search 搜索、web_fetch 读取网页。需要外部资料、最新信息或别人的成熟做法时使用（例如为问题找候选策略、核实投资或学习方法的依据）；先搜索，挑可信的结果再细读，不要只凭摘要下结论。引用网上的内容时在回复末尾列出来源链接，写进策略正文时也注明出处。每次搜索和读取都会计费，够用就停。` : ''}
 
 ## 关于我
 ${(await getProfile()).trim().slice(0, 4000) || '（还没有内容）'}
@@ -92,11 +94,12 @@ export async function runAgent(opts: {
   onEvent: (e: AgentEvent) => void
 }): Promise<ModelMessage[]> {
   let streamError: unknown
+  const web = !!opts.settings.webTools && !!webKeyOf(opts.settings)
   const result = streamText({
     model: buildModel(opts.settings),
-    instructions: await systemPrompt(opts.context),
+    instructions: await systemPrompt(opts.context, web),
     messages: opts.history,
-    tools,
+    tools: web ? { ...tools, ...webTools(opts.settings) } : tools,
     stopWhen: stepCountIs(25),
     abortSignal: opts.signal,
     onError: ({ error }) => { streamError = error },

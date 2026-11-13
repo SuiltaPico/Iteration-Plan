@@ -5,7 +5,17 @@ export interface AiSettings {
   baseURL: string
   apiKey: string
   model: string
+  /** 联网：让 AI 用 DeepSeek 的 Search / Fetch API 搜索和读取网页 */
+  webTools?: boolean
+  /** DeepSeek API Key；留空且主接口是 DeepSeek 时沿用主 Key */
+  webKey?: string
+  /** 测试用：覆盖 DeepSeek 接口地址 */
+  webBase?: string
 }
+
+export const isDeepSeek = (s: AiSettings) => /deepseek\.com/i.test(s.baseURL)
+/** 联网工具实际使用的 key */
+export const webKeyOf = (s: AiSettings) => (s.webKey?.trim() || (isDeepSeek(s) ? s.apiKey.trim() : ''))
 
 export const PRESETS: { label: string; s: Omit<AiSettings, 'apiKey'> }[] = [
   { label: 'Anthropic', s: { protocol: 'anthropic', baseURL: 'https://api.anthropic.com/v1', model: 'claude-opus-5-5' } },
