@@ -40,7 +40,6 @@ export default function Overview() {
   if (topics.length === 0) {
     return (
       <div className="page">
-        <CheckIn strategies={[]} topics={new Map()} last={last} />
         <div className="hero-empty">
           <h1>用迭代的方式管理你的策略</h1>
           <p>建一个<b>主题</b>（比如「早起」「阅读」「投资」），在里面写下<b>策略</b>，用一段时间后复盘：执行了有效 +1、无效 −1。<br />分数只是记录，留下还是<b>淘汰</b>由你决定（也可以让 AI 帮你判断）。</p>

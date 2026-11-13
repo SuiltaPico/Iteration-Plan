@@ -1,4 +1,4 @@
-import { calibration, CRITERIA_LABEL, fmtMetric, LOG_RESULT_LABEL, OUTCOME_LABEL, outcomeOf, PREDICTION_LABEL, STATUS_LABEL, versionOf, type Backup, type Metric, type Strategy } from '../db'
+import { CRITERIA_LABEL, LOG_RESULT_LABEL, OUTCOME_LABEL, outcomeOf, STATUS_LABEL, versionOf, type Backup, type Strategy } from '../db'
 import { fmtDate } from '../util'
 
 /** 文件名里不能用的字符换掉，保持可读 */
@@ -37,7 +37,7 @@ export function toMarkdownFiles(d: Backup): Record<string, string> {
       index.push(`### ${g}`, '')
       for (const s of list) {
         const path = unique(`${dir}/${safe(g)}/${safe(s.title)}.md`, s.id)
-        files[path] = strategyMd(s, d, g, tp.find((p) => p.title === g)?.metrics ?? [])
+        files[path] = strategyMd(s, d, g)
         index.push(`- [${s.title}](${encodeURI(path)}) — ${STATUS_LABEL[s.status]} ${s.score > 0 ? '+' : ''}${s.score}`)
       }
       index.push('')
@@ -47,38 +47,18 @@ export function toMarkdownFiles(d: Backup): Record<string, string> {
     files[`${dir}/打法.md`] = [`# ${t.name} · 打法`, '', kept.length ? '' : '还没有留存的策略。',
       ...groups.flatMap((g) => {
         const list = kept.filter((s) => pname(s) === g)
-        const ms = tp.find((p) => p.title === g)?.metrics ?? []
-        return list.length ? [`## ${g}`, '', ...(ms.length ? [`指标：${ms.map((m) => `${m.name}（${m.agg === 'sum' ? '累计' : '平均'}，${m.better === 'higher' ? '越大越好' : '越小越好'}）`).join('、')}`, ''] : []), ...list.flatMap((s) => [`### ${s.title}`, '', ...(s.criteria?.trim() ? [`> 判断标准：${s.criteria.trim()}`, ''] : []), s.content.trim(), ''])] : []
+        return list.length ? [`## ${g}`, '', ...list.flatMap((s) => [`### ${s.title}`, '', ...(s.criteria?.trim() ? [`> 判断标准：${s.criteria.trim()}`, ''] : []), s.content.trim(), ''])] : []
       })].join('\n')
-
-    const ideas = (d.ideas ?? []).filter((x) => x.topicId === t.id)
-    if (ideas.length) {
-      files[`${dir}/想法池.md`] = [`# ${t.name} · 想法池`, '',
-        ...[...tp.map((p) => ({ id: p.id as string | undefined, title: p.title })), { id: undefined, title: '其他' }].flatMap((g) => {
-          const xs = ideas.filter((x) => (g.id ? x.problemId === g.id : !x.problemId || !tp.some((p) => p.id === x.problemId)))
-          return xs.length ? [`## ${g.title}`, '', ...xs.map((x) => `- ${x.text}${x.source ? `（来源：${x.source}）` : ''}`), ''] : []
-        })].join('\n')
-    }
 
     const dead = mine.filter((s) => s.status === 'eliminated').sort((a, b) => b.statusChangedAt - a.statusChangedAt)
     files[`${dir}/踩过的坑.md`] = [`# ${t.name} · 踩过的坑`, '', dead.length ? '' : '还没有淘汰过策略。',
       ...dead.flatMap((s) => [`## ${s.title}`, '', `${pname(s)} · 淘汰于 ${fmtDate(s.statusChangedAt).slice(0, 10)}`, '', s.lesson?.trim() || '（没写原因）', ''])].join('\n')
   }
-  const preds = d.predictions ?? []
-  if (preds.length) {
-    const cal = calibration(preds)
-    files['预测.md'] = ['# 预测', '', '## 校准', '', '| 把握 | 次数 | 实际说中 |', '| --- | --- | --- |',
-      ...cal.map((b) => `| ${b.lo}–${b.hi}% | ${b.n} | ${b.rate === null ? '—' : `${Math.round(b.rate * 100)}%`} |`), '',
-      '## 记录', '',
-      ...[...preds].sort((a, b) => b.createdAt - a.createdAt).map((p) => `- ${fmtDate(p.createdAt).slice(0, 10)} 【${p.confidence}%】${p.statement} → ${p.outcome ? PREDICTION_LABEL[p.outcome] : '待验证'}${p.resolvedNote ? `：${p.resolvedNote}` : ''}`),
-    ].join('\n')
-    index.push('- [预测](预测.md)', '')
-  }
   files['README.md'] = index.join('\n')
   return files
 }
 
-function strategyMd(s: Strategy, d: Backup, problem: string, metrics: Metric[]) {
+function strategyMd(s: Strategy, d: Backup, problem: string) {
   const reviews = d.reviews.filter((r) => r.strategyId === s.id).sort((a, b) => a.createdAt - b.createdAt)
   const logs = (d.logs ?? []).filter((l) => l.strategyId === s.id).sort((a, b) => a.createdAt - b.createdAt)
   const parent = s.parentId ? d.strategies.find((x) => x.id === s.parentId) : undefined
@@ -91,14 +71,11 @@ function strategyMd(s: Strategy, d: Backup, problem: string, metrics: Metric[]) 
     ...(s.criteria?.trim() ? [`> 判断标准：${s.criteria.trim()}`, ''] : []),
     s.content.trim(), '',
     ...(s.status === 'eliminated' && s.lesson?.trim() ? ['## 淘汰原因', '', s.lesson.trim(), ''] : []),
-    ...(logs.length ? ['## 使用记录', '', ...logs.map((l) => {
-      const vals = metrics.filter((m) => typeof l.values?.[m.id] === 'number').map((m) => `${m.name} ${fmtMetric(l.values![m.id], m)}`)
-      return `- ${fmtDate(l.createdAt)}${l.emoji ? ` ${l.emoji}` : ''}${l.result ? ` 【${LOG_RESULT_LABEL[l.result]}】` : ''} ${l.note}${vals.length ? `（${vals.join('，')}）` : ''}${l.tags?.length ? ` #${l.tags.join(' #')}` : ''}`
-    }), ''] : []),
+    ...(logs.length ? ['## 使用记录', '', ...logs.map((l) => `- ${fmtDate(l.createdAt)}${l.result ? ` 【${LOG_RESULT_LABEL[l.result]}】` : ''} ${l.note}`), ''] : []),
     ...(reviews.length ? ['## 复盘记录', '', ...reviews.map((r) => {
       if (r.event) return `- ${fmtDate(r.createdAt)} —— 开始第 ${r.version} 版 ——`
       const head = r.statusChange ? `${STATUS_LABEL[r.statusChange.from]} → ${STATUS_LABEL[r.statusChange.to]}` : OUTCOME_LABEL[outcomeOf(r)]
-      return `- ${fmtDate(r.createdAt)} v${r.version ?? 1}${r.emoji ? ` ${r.emoji}` : ''} 【${head}】${r.criteriaMet ? `（标准${CRITERIA_LABEL[r.criteriaMet]}）` : ''} ${r.note}`.trimEnd()
+      return `- ${fmtDate(r.createdAt)} v${r.version ?? 1} 【${head}】${r.criteriaMet ? `（标准${CRITERIA_LABEL[r.criteriaMet]}）` : ''} ${r.note}`.trimEnd()
     }), ''] : []),
   ]
   return [...fm, ...body].join('\n')

@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { addLog, db, fmtMetric, LOG_RESULT_LABEL, topicTags, type LogResult, type Metric, type Strategy, type UsageLog } from '../db'
-import EmojiPicker, { TagPicker } from './EmojiPicker'
+import { addLog, db, LOG_RESULT_LABEL, type LogResult, type Strategy } from '../db'
 import { fmtRelative } from '../util'
 import { toast } from './Dialogs'
 
@@ -15,9 +14,6 @@ export default function QuickLog() {
   const [q, setQ] = useState('')
   const [note, setNote] = useState('')
   const [result, setResult] = useState<LogResult | undefined>()
-  const [values, setValues] = useState<Record<string, string>>({})
-  const [tags, setTags] = useState<string[]>([])
-  const [emoji, setEmoji] = useState<string | undefined>()
   const noteRef = useRef<HTMLTextAreaElement>(null)
 
   const topics = useLiveQuery(() => db.topics.orderBy('order').toArray(), [])
@@ -26,8 +22,6 @@ export default function QuickLog() {
   const recentLogs = useLiveQuery(() => db.logs.orderBy('createdAt').reverse().limit(200).toArray(), [])
   const s = strategies?.find((x) => x.id === id)
   const myLogs = useLiveQuery(() => (id ? db.logs.where('strategyId').equals(id).reverse().sortBy('createdAt') : []), [id])
-  const metrics = (s?.problemId && problems?.find((p) => p.id === s.problemId)?.metrics) || []
-  const knownTags = useLiveQuery(() => (s ? topicTags(s.topicId) : []), [s?.topicId]) ?? []
 
   useEffect(() => { if (id) noteRef.current?.focus() }, [id])
 
@@ -50,12 +44,7 @@ export default function QuickLog() {
 
   async function save() {
     if (!s || !note.trim()) { noteRef.current?.focus(); return }
-    const nums: Record<string, number> = {}
-    for (const m of metrics) {
-      const raw = values[m.id]?.trim()
-      if (raw && !Number.isNaN(Number(raw))) nums[m.id] = Number(raw)
-    }
-    await addLog(s.id, note.trim(), result, { values: nums, tags, emoji })
+    await addLog(s.id, note.trim(), result)
     toast('记下了')
     back()
   }
@@ -106,24 +95,6 @@ export default function QuickLog() {
                   <button key={k} className={`chip ${result === k ? 'on' : ''}`} onClick={() => setResult(result === k ? undefined : k)}>{LOG_RESULT_LABEL[k]}</button>
                 ))}
               </div>
-              {metrics.length > 0 && (
-                <div className="metric-inputs">
-                  {metrics.map((m) => (
-                    <label key={m.id} className="metric-input">
-                      <span>{m.name}</span>
-                      <input id={`log-metric-${m.id}`} type="number" step="any" inputMode="decimal" value={values[m.id] ?? ''}
-                        placeholder={m.agg === 'sum' ? '这次，例如 350 或 -120' : '这次的数值'}
-                        onChange={(e) => setValues({ ...values, [m.id]: e.target.value })} />
-                      {m.unit && <em>{m.unit}</em>}
-                    </label>
-                  ))}
-                </div>
-              )}
-              <div className="field">
-                <span className="muted sm">情境（可选）：什么情况下用的</span>
-                <TagPicker value={tags} options={knownTags} onChange={setTags} />
-              </div>
-              <EmojiPicker value={emoji} onChange={setEmoji} />
               <div className="row-btns end">
                 {!params.get('fixed') && <button className="btn ghost" onClick={() => setParams({}, { replace: true })}>换一个策略</button>}
                 <button className="btn primary" disabled={!note.trim()} onClick={save}>记下</button>
@@ -133,7 +104,7 @@ export default function QuickLog() {
             {myLogs && myLogs.length > 0 && (
               <div className="review-history">
                 <div className="label">之前记过</div>
-                {myLogs.slice(0, 5).map((l) => <LogRow key={l.id} l={l} metrics={metrics} />)}
+                {myLogs.slice(0, 5).map((l) => <LogRow key={l.id} l={l} />)}
               </div>
             )}
           </section>
@@ -143,20 +114,11 @@ export default function QuickLog() {
   )
 }
 
-export function LogRow({ l, onDelete, metrics = [] }: { l: UsageLog; onDelete?: () => void; metrics?: Metric[] }) {
-  const vals = metrics.filter((m) => typeof l.values?.[m.id] === 'number')
+export function LogRow({ l, onDelete }: { l: { id: string; note: string; result?: LogResult; createdAt: number }; onDelete?: () => void }) {
   return (
     <div className="log-row">
-      {l.emoji ? <span className="log-emoji">{l.emoji}</span> : <span className={`log-dot r-${l.result ?? 'none'}`} title={l.result ? LOG_RESULT_LABEL[l.result] : undefined} />}
-      <span className="log-note">
-        {l.result && <span className={`log-result r-${l.result}`}>{LOG_RESULT_LABEL[l.result]} · </span>}{l.note}
-        {(vals.length > 0 || (l.tags?.length ?? 0) > 0) && (
-          <span className="log-meta">
-            {vals.map((m) => <span key={m.id} className="log-val">{m.name} {fmtMetric(l.values![m.id], m)}</span>)}
-            {l.tags?.map((t) => <span key={t} className="log-tag">{t}</span>)}
-          </span>
-        )}
-      </span>
+      <span className={`log-dot r-${l.result ?? 'none'}`} title={l.result ? LOG_RESULT_LABEL[l.result] : undefined} />
+      <span className="log-note">{l.result && <span className={`log-result r-${l.result}`}>{LOG_RESULT_LABEL[l.result]} · </span>}{l.note}</span>
       <span className="muted sm">{fmtRelative(l.createdAt)}</span>
       {onDelete && <button className="icon-btn" title="删除这条记录" onClick={onDelete}>×</button>}
     </div>

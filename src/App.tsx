@@ -5,7 +5,6 @@ import Overview from './components/Overview'
 import TopicPage from './components/TopicPage'
 import StrategyPage from './components/StrategyPage'
 import ProfilePage from './components/ProfilePage'
-import PredictionsPage from './components/PredictionsPage'
 import { DialogHost } from './components/Dialogs'
 import { openAi } from './bus'
 import ReviewMode from './components/ReviewMode'
@@ -36,7 +35,6 @@ export default function App() {
           <Route path="/topic/:id" element={<TopicPage />} />
           <Route path="/strategy/:id" element={<StrategyPage />} />
           <Route path="/me" element={<ProfilePage />} />
-          <Route path="/predictions" element={<PredictionsPage />} />
           <Route path="*" element={<Overview />} />
         </Routes>
       </main>

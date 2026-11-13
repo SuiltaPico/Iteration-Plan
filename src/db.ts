@@ -18,27 +18,12 @@ export interface Topic {
   updatedAt: number
 }
 
-/** 衡量一个问题的指标：同一问题下的候选策略用同一把尺子比较 */
-export interface Metric {
-  id: string
-  name: string
-  /** 单位，例如 元、%、分钟、小时 */
-  unit: string
-  /** sum：看累计（如盈亏）；avg：看平均（如用时） */
-  agg: 'sum' | 'avg'
-  /** 越大越好还是越小越好 */
-  better: 'higher' | 'lower'
-  /** 没用任何策略时的水平（可选），用来对照 */
-  baseline?: number
-}
-
 /** 主题下要解决的一个具体问题；问题下的策略互为候选解法 */
 export interface Problem {
   id: string
   topicId: string
   title: string
   description: string
-  metrics?: Metric[]
   order: number
   createdAt: number
   updatedAt: number
@@ -99,38 +84,7 @@ export interface Review {
   version?: number
   /** 系统事件（例如开始新版本），不是用户的复盘 */
   event?: 'new-version'
-  emoji?: string
   createdAt: number
-}
-
-/** 预测：做决定前写下预期和把握，到期后对照结果，用来校准自己的判断 */
-export type PredictionOutcome = 'right' | 'partly' | 'wrong'
-export interface Prediction {
-  id: string
-  topicId?: string
-  strategyId?: string
-  statement: string
-  /** 把握，50~99（百分比） */
-  confidence: number
-  /** 什么时候能见分晓 */
-  dueAt?: number
-  outcome?: PredictionOutcome
-  resolvedNote?: string
-  resolvedAt?: number
-  createdAt: number
-  updatedAt: number
-}
-export const PREDICTION_LABEL: Record<PredictionOutcome, string> = { right: '说中了', partly: '部分说中', wrong: '没说中' }
-
-/** 想法池：还没开始试的做法，记一句话和来源 */
-export interface Idea {
-  id: string
-  topicId: string
-  problemId?: string
-  text: string
-  source?: string
-  createdAt: number
-  updatedAt: number
 }
 
 /** 「记一笔」：某次实际用了这个策略，当时的情况和结果。不计分，复盘时参考 */
@@ -140,11 +94,6 @@ export interface UsageLog {
   strategyId: string
   note: string
   result?: LogResult
-  /** 指标数值：metricId → 数值 */
-  values?: Record<string, number>
-  /** 情境标签，例如「大涨」「精力低」 */
-  tags?: string[]
-  emoji?: string
   createdAt: number
 }
 export const LOG_RESULT_LABEL: Record<LogResult, string> = { good: '顺利', meh: '一般', bad: '不理想' }
@@ -164,6 +113,9 @@ export interface Tombstone {
 }
 export type SyncTable = 'topics' | 'problems' | 'strategies' | 'reviews' | 'logs' | 'meta' | 'predictions' | 'ideas'
 
+/** 已撤下功能（预测、想法池）留下的数据：不再有界面，但保留在本地并随同步、备份原样带上，避免丢失 */
+export type LegacyRecord = { id: string; updatedAt?: number; createdAt?: number; topicId?: string; [k: string]: unknown }
+
 export const db = new Dexie('iteration-plan') as Dexie & {
   topics: EntityTable<Topic, 'id'>
   problems: EntityTable<Problem, 'id'>
@@ -173,8 +125,8 @@ export const db = new Dexie('iteration-plan') as Dexie & {
   logs: EntityTable<UsageLog, 'id'>
   meta: EntityTable<Meta, 'key'>
   tombstones: EntityTable<Tombstone, 'id'>
-  predictions: EntityTable<Prediction, 'id'>
-  ideas: EntityTable<Idea, 'id'>
+  predictions: EntityTable<LegacyRecord, 'id'>
+  ideas: EntityTable<LegacyRecord, 'id'>
 }
 
 db.version(1).stores({
@@ -194,12 +146,11 @@ db.version(4).stores({
   meta: 'key',
   tombstones: 'id',
 })
+// 第 5 版加过预测、想法池两张表（功能已撤下）。保留声明，已升级到第 5 版的浏览器才能正常打开数据库
 db.version(5).stores({
   predictions: 'id, topicId, strategyId, dueAt, createdAt',
   ideas: 'id, topicId, problemId, createdAt',
 })
-
-export const REVIEW_EMOJIS = ['🎉', '😄', '🙂', '😐', '😕', '😣', '😤', '😴', '🤔', '💡', '🔥', '🎯']
 
 const bury = (table: SyncTable, ids: string[]) => {
   const at = Date.now()
@@ -244,19 +195,14 @@ export async function updateTopic(id: string, patch: Partial<Topic>) {
 }
 
 export async function deleteTopic(id: string) {
-  await db.transaction('rw', [db.topics, db.problems, db.strategies, db.reviews, db.logs, db.pending, db.tombstones, db.ideas, db.predictions], async () => {
+  await db.transaction('rw', [db.topics, db.problems, db.strategies, db.reviews, db.logs, db.pending, db.tombstones], async () => {
     const ids = await db.strategies.where('topicId').equals(id).primaryKeys()
     const reviewIds = await db.reviews.where('strategyId').anyOf(ids).primaryKeys()
     const logIds = await db.logs.where('strategyId').anyOf(ids).primaryKeys()
     const problemIds = await db.problems.where('topicId').equals(id).primaryKeys()
-    const ideaIds = await db.ideas.where('topicId').equals(id).primaryKeys()
-    const predIds = await db.predictions.where('topicId').equals(id).primaryKeys()
     await Promise.all([
       bury('reviews', reviewIds), bury('logs', logIds), bury('strategies', ids), bury('problems', problemIds), bury('topics', [id]),
-      bury('ideas', ideaIds), bury('predictions', predIds),
     ])
-    await db.ideas.bulkDelete(ideaIds)
-    await db.predictions.bulkDelete(predIds)
     await db.pending.bulkDelete(ids)
     await db.reviews.bulkDelete(reviewIds)
     await db.logs.bulkDelete(logIds)
@@ -285,10 +231,9 @@ export async function updateProblem(id: string, patch: Partial<Problem>) {
 
 /** 删除问题：其下的策略移到「未归类」 */
 export async function deleteProblem(id: string) {
-  await db.transaction('rw', [db.problems, db.strategies, db.tombstones, db.ideas], async () => {
+  await db.transaction('rw', db.problems, db.strategies, db.tombstones, async () => {
     const now = Date.now()
     await db.strategies.where('problemId').equals(id).modify((s) => { delete s.problemId; s.updatedAt = now })
-    await db.ideas.where('problemId').equals(id).modify((x) => { delete x.problemId; x.updatedAt = now })
     await bury('problems', [id])
     await db.problems.delete(id)
   })
@@ -335,7 +280,7 @@ export async function deleteStrategy(id: string) {
 }
 
 /** 复盘：只计分（有效 +1、无效 −1，没执行和只记录不计分），不会改变状态。留存和淘汰由人或 AI 决定 */
-export async function addReview(strategyId: string, outcome: Outcome, note: string, criteriaMet?: CriteriaMet, emoji?: string) {
+export async function addReview(strategyId: string, outcome: Outcome, note: string, criteriaMet?: CriteriaMet) {
   await db.transaction('rw', db.topics, db.strategies, db.reviews, async () => {
     const s = await db.strategies.get(strategyId)
     if (!s) return
@@ -347,7 +292,6 @@ export async function addReview(strategyId: string, outcome: Outcome, note: stri
       id: uid(), strategyId, delta, note, scoreAfter: score, createdAt: now, outcome, version: versionOf(s),
     }
     if (criteriaMet) r.criteriaMet = criteriaMet
-    if (emoji) r.emoji = emoji
     await db.reviews.add(r)
     await db.strategies.update(strategyId, { score, updatedAt: now, nextAskAt: now + askInterval(s.status, t) })
   })
@@ -425,8 +369,8 @@ export interface Backup {
   logs?: UsageLog[]
   meta?: Meta[]
   tombstones?: Tombstone[]
-  predictions?: Prediction[]
-  ideas?: Idea[]
+  predictions?: LegacyRecord[]
+  ideas?: LegacyRecord[]
 }
 
 export async function exportAll(): Promise<Backup> {
@@ -434,7 +378,10 @@ export async function exportAll(): Promise<Backup> {
     db.topics.toArray(), db.problems.toArray(), db.strategies.toArray(), db.reviews.toArray(),
     db.logs.toArray(), db.meta.toArray(), db.tombstones.toArray(), db.predictions.toArray(), db.ideas.toArray(),
   ])
-  return { app: 'iteration-plan', version: 3, exportedAt: Date.now(), topics, problems, strategies, reviews, logs, meta, tombstones, predictions, ideas }
+  return {
+    app: 'iteration-plan', version: 3, exportedAt: Date.now(), topics, problems, strategies, reviews, logs, meta, tombstones,
+    ...(predictions.length ? { predictions } : {}), ...(ideas.length ? { ideas } : {}),
+  }
 }
 
 /** 用一份完整数据替换本地数据（导入备份、同步合并后写回） */
@@ -541,114 +488,11 @@ export async function snoozeAsk(id: string, days = 3) {
 
 /* ---------------- 记一笔 ---------------- */
 
-export async function addLog(strategyId: string, note: string, result?: LogResult, extra: { values?: Record<string, number>; tags?: string[]; emoji?: string } = {}) {
+export async function addLog(strategyId: string, note: string, result?: LogResult) {
   const l: UsageLog = { id: uid(), strategyId, note, createdAt: Date.now() }
   if (result) l.result = result
-  if (extra.values && Object.keys(extra.values).length) l.values = extra.values
-  if (extra.tags?.length) l.tags = extra.tags
-  if (extra.emoji) l.emoji = extra.emoji
   await db.logs.add(l)
   return l
-}
-
-/** 一个主题下用过的情境标签（按使用次数排序） */
-export async function topicTags(topicId: string) {
-  const ids = await db.strategies.where('topicId').equals(topicId).primaryKeys()
-  const logs = await db.logs.where('strategyId').anyOf(ids).toArray()
-  const n = new Map<string, number>()
-  for (const l of logs) for (const t of l.tags ?? []) n.set(t, (n.get(t) ?? 0) + 1)
-  return [...n.entries()].sort((a, b) => b[1] - a[1]).map(([t]) => t)
-}
-
-/* ---------------- 指标 ---------------- */
-
-export const newMetricId = () => uid().slice(0, 8)
-
-export interface MetricStat { n: number; value: number | null; series: { at: number; v: number }[] }
-/** 某个策略（当前版本起）在一个指标上的统计：sum 取累计、avg 取平均；series 用于趋势（sum 为累计曲线） */
-export function metricStat(m: Metric, logs: UsageLog[], since = 0): MetricStat {
-  const pts = logs
-    .filter((l) => l.createdAt >= since && typeof l.values?.[m.id] === 'number')
-    .sort((a, b) => a.createdAt - b.createdAt)
-    .map((l) => ({ at: l.createdAt, v: l.values![m.id] }))
-  if (!pts.length) return { n: 0, value: null, series: [] }
-  const sum = pts.reduce((a, p) => a + p.v, 0)
-  if (m.agg === 'sum') {
-    let acc = 0
-    return { n: pts.length, value: sum, series: pts.map((p) => ({ at: p.at, v: (acc += p.v) })) }
-  }
-  return { n: pts.length, value: sum / pts.length, series: pts }
-}
-
-/** 当前版本从什么时候开始（统计指标时只算这一版） */
-export function versionSince(s: Strategy, reviews: Review[]) {
-  const v = reviews.filter((r) => r.event === 'new-version' && (r.version ?? 1) === versionOf(s)).sort((a, b) => b.createdAt - a.createdAt)[0]
-  return v?.createdAt ?? 0
-}
-
-export function fmtMetric(v: number | null, m: Metric) {
-  if (v === null) return '—'
-  const r = Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10
-  const sign = m.agg === 'sum' && r > 0 ? '+' : ''
-  return `${sign}${r}${m.unit ? ` ${m.unit}` : ''}`
-}
-
-/* ---------------- 预测 ---------------- */
-
-export async function addPrediction(p: Pick<Prediction, 'statement' | 'confidence' | 'dueAt' | 'topicId' | 'strategyId'>) {
-  const now = Date.now()
-  const x: Prediction = { id: uid(), statement: p.statement, confidence: p.confidence, createdAt: now, updatedAt: now }
-  if (p.dueAt) x.dueAt = p.dueAt
-  if (p.topicId) x.topicId = p.topicId
-  if (p.strategyId) x.strategyId = p.strategyId
-  await db.predictions.add(x)
-  return x
-}
-export async function resolvePrediction(id: string, outcome: PredictionOutcome, note: string) {
-  const now = Date.now()
-  await db.predictions.update(id, { outcome, resolvedNote: note, resolvedAt: now, updatedAt: now })
-}
-export async function deletePrediction(id: string) {
-  await db.transaction('rw', db.predictions, db.tombstones, async () => {
-    await bury('predictions', [id])
-    await db.predictions.delete(id)
-  })
-}
-
-/** 校准：按把握分档，看实际说中的比例（部分说中算一半） */
-export function calibration(list: Prediction[]) {
-  const buckets = [[50, 59], [60, 69], [70, 79], [80, 89], [90, 99]] as const
-  return buckets.map(([lo, hi]) => {
-    const xs = list.filter((p) => p.outcome && p.confidence >= lo && p.confidence <= hi)
-    const hit = xs.reduce((a, p) => a + (p.outcome === 'right' ? 1 : p.outcome === 'partly' ? 0.5 : 0), 0)
-    return { lo, hi, n: xs.length, rate: xs.length ? hit / xs.length : null }
-  })
-}
-
-/* ---------------- 想法池 ---------------- */
-
-export async function addIdea(topicId: string, text: string, opts: { problemId?: string; source?: string } = {}) {
-  const now = Date.now()
-  const x: Idea = { id: uid(), topicId, text, createdAt: now, updatedAt: now }
-  if (opts.problemId) x.problemId = opts.problemId
-  if (opts.source) x.source = opts.source
-  await db.ideas.add(x)
-  return x
-}
-export async function deleteIdea(id: string) {
-  await db.transaction('rw', db.ideas, db.tombstones, async () => {
-    await bury('ideas', [id])
-    await db.ideas.delete(id)
-  })
-}
-/** 想法转成候选策略（草稿），想法随之移除 */
-export async function ideaToDraft(id: string) {
-  const x = await db.ideas.get(id)
-  if (!x) return
-  const content = x.source ? `${x.text}\n\n来源：${x.source}` : x.text
-  const s = await createStrategy(x.topicId, x.text.slice(0, 40), { content, isDraft: true, problemId: x.problemId })
-  await deleteIdea(id)
-  return s
 }
 
 export async function deleteLog(id: string) {
