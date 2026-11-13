@@ -1,17 +1,15 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db, STATUS_LABEL, type Strategy } from '../db'
+import { db, type Strategy } from '../db'
 import CheckIn from './CheckIn'
 import StrategyCard, { useLastReviews } from './StrategyCard'
 import TopicDialog from './TopicDialog'
-import { fmtRelative } from '../util'
 import { openAi } from '../bus'
 
 export default function Overview() {
   const topics = useLiveQuery(() => db.topics.orderBy('order').toArray(), [])
   const strategies = useLiveQuery(() => db.strategies.toArray(), [])
-  const recent = useLiveQuery(() => db.reviews.orderBy('createdAt').reverse().limit(8).toArray(), [])
   const last = useLastReviews()
   const [q, setQ] = useState('')
   const [creating, setCreating] = useState(false)
@@ -30,10 +28,7 @@ export default function Overview() {
   if (!topics || !strategies) return null
 
   const real = strategies.filter((s) => !s.isDraft)
-  const stat = { trial: 0, kept: 0, eliminated: 0 }
-  real.forEach((s) => stat[s.status]++)
   const topicMap = new Map(topics.map((t) => [t.id, t]))
-  const sMap = new Map(strategies.map((s) => [s.id, s]))
 
   const query = q.trim().toLowerCase()
   const hits = query
@@ -61,11 +56,6 @@ export default function Overview() {
       <header className="page-head">
         <div className="head-text">
           <h1>总览</h1>
-          <div className="stat-row">
-            <span><b>{stat.trial}</b> 试用中</span>
-            <span><b>{stat.kept}</b> 已留存</span>
-            <span><b>{stat.eliminated}</b> 已淘汰</span>
-          </div>
         </div>
         <div className="head-actions">
           <input className="search" placeholder="搜索策略…" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -83,21 +73,15 @@ export default function Overview() {
           </div>
         </section>
       ) : (
-        <div className="overview-layout">
-          <div className="topic-boards">
+        <div className="topic-boards">
             {topics.map((t) => {
               const all = byTopic.get(t.id) ?? []
               const list = all.filter((s) => !s.isDraft && s.status !== 'eliminated').sort((a, b) => b.score - a.score)
-              const drafts = all.filter((s) => s.isDraft).length
-              const elim = all.filter((s) => !s.isDraft && s.status === 'eliminated').length
               return (
                 <section key={t.id} className="board">
                   <Link to={`/topic/${t.id}`} className="board-head">
                     <span className="dot" style={{ background: t.color }} />
                     <h2>{t.name}</h2>
-                    <span className="muted sm">
-                      {list.length} 个在用{elim ? ` · ${elim} 个已淘汰` : ''}{drafts ? ` · ${drafts} 份草稿` : ''}
-                    </span>
                     <span className="arrow">→</span>
                   </Link>
                   {t.description && <p className="board-desc">{t.description}</p>}
@@ -111,31 +95,6 @@ export default function Overview() {
                 </section>
               )
             })}
-          </div>
-          <aside className="activity">
-            <h3 className="sec-title">最近复盘</h3>
-            {recent?.length ? (
-              <ul className="activity-list">
-                {recent.map((r) => {
-                  const s = sMap.get(r.strategyId)
-                  if (!s) return null
-                  return (
-                    <li key={r.id}>
-                      <Link to={`/strategy/${s.id}`}>
-                        <span className={`delta ${r.delta > 0 ? 'pos' : r.delta < 0 ? 'neg' : ''}`}>
-                          {r.delta > 0 ? `+${r.delta}` : r.delta || '·'}
-                        </span>
-                        <span className="act-body">
-                          <span className="act-title">{s.title || '未命名策略'}</span>
-                          <span className="muted sm">{r.statusChange ? `→ ${STATUS_LABEL[r.statusChange.to]}${r.note ? ' · ' : ''}` : ''}{r.note || (r.statusChange ? '' : '复盘')} · {fmtRelative(r.createdAt)}</span>
-                        </span>
-                      </Link>
-                    </li>
-                  )
-                })}
-              </ul>
-            ) : <p className="muted sm">还没有复盘记录。用一段时间后，回来给策略打分吧。</p>}
-          </aside>
         </div>
       )}
     </div>
