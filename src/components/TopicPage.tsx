@@ -5,6 +5,7 @@ import { createStrategy, db, deleteTopic, STATUS_LABEL, type Status } from '../d
 import StrategyCard from './StrategyCard'
 import TopicDialog from './TopicDialog'
 import { confirmDialog } from './Dialogs'
+import { openAi } from '../bus'
 
 type Filter = 'active' | Status | 'all'
 type Sort = 'score' | 'updated' | 'created'
@@ -49,6 +50,8 @@ export default function TopicPage() {
           <p className="muted sm">留存线 +{topic.keepAt} · 淘汰线 {topic.eliminateAt}</p>
         </div>
         <div className="head-actions">
+          <button className="btn" onClick={() => openAi.emit({ prompt: '为当前主题再想 3 个新策略' })}>✦ AI 写策略</button>
+          <button className="btn" onClick={() => openAi.emit({ prompt: '分析当前主题的策略和复盘记录，给我改进建议', send: true })}>✦ AI 复盘</button>
           <button className="btn ghost" onClick={() => setEditing(true)}>编辑主题</button>
           <button className="btn ghost danger" onClick={remove}>删除</button>
           <button className="btn primary" onClick={add}>＋ 新建策略</button>

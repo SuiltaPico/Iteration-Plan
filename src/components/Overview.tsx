@@ -5,6 +5,7 @@ import { db, STATUS_LABEL, type Strategy } from '../db'
 import StrategyCard from './StrategyCard'
 import TopicDialog from './TopicDialog'
 import { fmtRelative } from '../util'
+import { openAi } from '../bus'
 
 export default function Overview() {
   const topics = useLiveQuery(() => db.topics.orderBy('order').toArray(), [])
@@ -42,7 +43,10 @@ export default function Overview() {
         <div className="hero-empty">
           <h1>用迭代的方式管理你的策略</h1>
           <p>建一个<b>主题</b>（比如「早起」「阅读」「投资」），在里面写下<b>策略</b>，用一段时间后复盘打分：<br />好用就 +1，分数到留存线自动<b>留存</b>；不好用就 −1，到淘汰线自动<b>淘汰</b>。</p>
-          <button className="btn primary lg" onClick={() => setCreating(true)}>创建第一个主题</button>
+          <div className="hero-actions">
+            <button className="btn primary lg" onClick={() => setCreating(true)}>创建第一个主题</button>
+            <button className="btn lg" onClick={() => openAi.emit({ prompt: '我想改进：' })}>✦ 让 AI 帮我起步</button>
+          </div>
         </div>
         {creating && <TopicDialog onClose={(t) => { setCreating(false); if (t) navigate(`/topic/${t.id}`) }} />}
       </div>
@@ -56,7 +60,11 @@ export default function Overview() {
           <h1>总览</h1>
           <p className="muted">{topics.length} 个主题 · 试用中 {stat.trial} · 已留存 {stat.kept} · 已淘汰 {stat.eliminated}</p>
         </div>
-        <input className="search" placeholder="搜索策略…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <div className="head-actions">
+          <input className="search" placeholder="搜索策略…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <button className="btn" onClick={() => openAi.emit({ prompt: '帮我建一个主题：' })}>✦ AI 生成</button>
+          <button className="btn" onClick={() => openAi.emit({ prompt: '看看我所有的策略，给我复盘建议', send: true })}>✦ AI 复盘</button>
+        </div>
       </header>
 
       {hits ? (

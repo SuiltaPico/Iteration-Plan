@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db'
 import TopicDialog from './TopicDialog'
 import BackupDialog from './BackupDialog'
+import { openAi } from '../bus'
 
 export default function Sidebar({ onNavigate }: { onNavigate: () => void }) {
   const topics = useLiveQuery(() => db.topics.orderBy('order').toArray(), [])
@@ -43,6 +44,7 @@ export default function Sidebar({ onNavigate }: { onNavigate: () => void }) {
         )}
       </nav>
       <div className="sidebar-foot">
+        <button className="btn ghost sm" onClick={() => { openAi.emit({}); onNavigate() }}>✦ AI 助手</button>
         <button className="btn ghost sm" onClick={() => setBackup(true)}>备份与恢复</button>
       </div>
       {backup && <BackupDialog onClose={() => setBackup(false)} />}

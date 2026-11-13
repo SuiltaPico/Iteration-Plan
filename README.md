@@ -10,6 +10,8 @@
   - 也可手动淘汰 / 直接留存 / 恢复试用（恢复时分数归零）
 - **浏览**：总览页按主题列出所有在用策略（按分数排序）和最近复盘记录，支持全文搜索；主题页可按状态筛选、排序。
 
+- **AI 助手**（右下角 ✦ AI，或各页面上的 ✦ 按钮）：一句话生成主题和策略、帮写/润色当前策略、根据分数和复盘记录给建议，也可以对话式地让它打分、淘汰、移动、改标题。AI 的改动直接写入数据。
+
 数据保存在浏览器本地（IndexedDB），不上传任何服务器。侧边栏底部「备份与恢复」可下载 / 复制 JSON 备份，或从文件 / 粘贴内容导入，换浏览器或设备时用它迁移数据。
 
 ## 开发
@@ -29,3 +31,16 @@ npm run build    # 构建到 dist/，可直接部署到任意静态托管（如 
 首次使用需要在仓库 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**。
 
 另有 `npm run build:single`，把全部代码与字体打成一个 JS + 一个 CSS（输出到 `dist-single/`），适合只能放少量文件的托管环境。
+
+## AI 设置
+
+在 AI 面板里点 ⚙ 填写：
+
+| 字段 | 说明 |
+| --- | --- |
+| 接口协议 | `OpenAI 兼容`（OpenAI、DeepSeek、通义、Kimi、OpenRouter 等）或 `Anthropic` |
+| Base URL | 例如 `https://api.openai.com/v1`、`https://api.deepseek.com/v1`、`https://api.anthropic.com/v1` |
+| API Key | 只保存在当前浏览器的 localStorage |
+| 模型 | 需支持工具调用，例如 `claude-opus-5-5`、`deepseek-chat` |
+
+请求由浏览器直接发给你填写的地址（基于 [Vercel AI SDK](https://ai-sdk.dev)，纯前端，无需后端）。部分服务商或中转不允许浏览器跨域调用，此时会提示无法连接，换一个支持浏览器访问的地址即可。

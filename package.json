@@ -10,12 +10,16 @@
     "build:single": "tsc -b && vite build -c vite.artifact.config.ts"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.103",
+    "@ai-sdk/openai-compatible": "^3.0.91",
     "@milkdown/crepe": "^7.23.0",
+    "ai": "^7.0.171",
     "dexie": "^4.4.7",
     "dexie-react-hooks": "^4.4.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "react-router-dom": "^7.18.5"
+    "react-router-dom": "^7.18.5",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",

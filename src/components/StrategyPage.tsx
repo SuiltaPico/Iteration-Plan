@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { addReview, db, deleteStrategy, setStatus, STATUS_LABEL, updateStrategy, type Strategy } from '../db'
 import { Score, ScoreMeter, StatusBadge } from './ScoreBadge'
 import { confirmDialog } from './Dialogs'
+import { contentChanged, flushEditors, openAi } from '../bus'
 import { daysSince, fmtDate } from '../util'
 
 const Editor = lazy(() => import('./Editor'))
@@ -44,7 +45,25 @@ function StrategyView({ s }: { s: Strategy }) {
   }
   useEffect(() => () => { clearTimeout(timer.current); flush() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // AI 运行前先保存未落盘的内容；AI 改写正文后重新载入编辑器
+  const [seed, setSeed] = useState({ content: s.content, rev: 0 })
+  useEffect(() => flushEditors.on(() => { clearTimeout(timer.current); flush() }), []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => contentChanged.on(async (id) => {
+    if (id !== s.id) return
+    clearTimeout(timer.current)
+    pending.current = null
+    setSaved(true)
+    const fresh = await db.strategies.get(id)
+    if (fresh) setSeed((p) => ({ content: fresh.content, rev: p.rev + 1 }))
+  }), [s.id])
+
   const titleInit = useRef(true)
+  const lastTitle = useRef(s.title)
+  useEffect(() => {
+    // 外部（AI）改了标题时同步到输入框
+    if (s.title !== lastTitle.current && s.title !== title) { titleInit.current = true; setTitle(s.title) }
+    lastTitle.current = s.title
+  }, [s.title]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (titleInit.current) { titleInit.current = false; return }
     const t = window.setTimeout(() => updateStrategy(s.id, { title }), 400)
@@ -88,9 +107,11 @@ function StrategyView({ s }: { s: Strategy }) {
           <div className="doc-meta">
             <StatusBadge status={s.status} />
             <span className="muted sm">创建于 {fmtDate(s.createdAt)} · 已使用 {daysSince(s.createdAt)} 天</span>
+            <span style={{ flex: 1 }} />
+            <button className="btn sm" onClick={() => openAi.emit({ prompt: s.content.trim() ? '帮我完善这个策略的正文，补充具体做法和判断有效的标准' : `根据标题「${title}」帮我写这个策略的正文`, send: true })}>✦ AI 帮写</button>
           </div>
           <Suspense fallback={<div className="editor muted" style={{ padding: '16px 48px' }}>加载编辑器…</div>}>
-            <Editor value={s.content} onChange={onContent} />
+            <Editor key={seed.rev} value={seed.content} onChange={onContent} />
           </Suspense>
         </article>
 
