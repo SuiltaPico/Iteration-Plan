@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { addLog, db, LOG_RESULT_LABEL, type LogResult, type Strategy } from '../db'
 import { fmtRelative } from '../util'
 import { toast } from './Dialogs'
+import EmojiPicker from './EmojiPicker'
 
 /** 记一笔：刚用了某个策略，记下当时的情况和结果（不计分，复盘时参考） */
 export default function QuickLog() {
@@ -14,6 +15,7 @@ export default function QuickLog() {
   const [q, setQ] = useState('')
   const [note, setNote] = useState('')
   const [result, setResult] = useState<LogResult | undefined>()
+  const [emoji, setEmoji] = useState<string | undefined>()
   const noteRef = useRef<HTMLTextAreaElement>(null)
 
   const topics = useLiveQuery(() => db.topics.orderBy('order').toArray(), [])
@@ -44,7 +46,7 @@ export default function QuickLog() {
 
   async function save() {
     if (!s || !note.trim()) { noteRef.current?.focus(); return }
-    await addLog(s.id, note.trim(), result)
+    await addLog(s.id, note.trim(), result, emoji)
     toast('记下了')
     back()
   }
@@ -95,6 +97,7 @@ export default function QuickLog() {
                   <button key={k} className={`chip ${result === k ? 'on' : ''}`} onClick={() => setResult(result === k ? undefined : k)}>{LOG_RESULT_LABEL[k]}</button>
                 ))}
               </div>
+              <EmojiPicker value={emoji} onChange={setEmoji} />
               <div className="row-btns end">
                 {!params.get('fixed') && <button className="btn ghost" onClick={() => setParams({}, { replace: true })}>换一个策略</button>}
                 <button className="btn primary" disabled={!note.trim()} onClick={save}>记下</button>
@@ -114,10 +117,10 @@ export default function QuickLog() {
   )
 }
 
-export function LogRow({ l, onDelete }: { l: { id: string; note: string; result?: LogResult; createdAt: number }; onDelete?: () => void }) {
+export function LogRow({ l, onDelete }: { l: { id: string; note: string; result?: LogResult; emoji?: string; createdAt: number }; onDelete?: () => void }) {
   return (
     <div className="log-row">
-      <span className={`log-dot r-${l.result ?? 'none'}`} title={l.result ? LOG_RESULT_LABEL[l.result] : undefined} />
+      {l.emoji ? <span className="log-emoji">{l.emoji}</span> : <span className={`log-dot r-${l.result ?? 'none'}`} title={l.result ? LOG_RESULT_LABEL[l.result] : undefined} />}
       <span className="log-note">{l.result && <span className={`log-result r-${l.result}`}>{LOG_RESULT_LABEL[l.result]} · </span>}{l.note}</span>
       <span className="muted sm">{fmtRelative(l.createdAt)}</span>
       {onDelete && <button className="icon-btn" title="删除这条记录" onClick={onDelete}>×</button>}

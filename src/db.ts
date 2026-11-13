@@ -84,6 +84,7 @@ export interface Review {
   version?: number
   /** 系统事件（例如开始新版本），不是用户的复盘 */
   event?: 'new-version'
+  emoji?: string
   createdAt: number
 }
 
@@ -94,9 +95,13 @@ export interface UsageLog {
   strategyId: string
   note: string
   result?: LogResult
+  emoji?: string
   createdAt: number
 }
 export const LOG_RESULT_LABEL: Record<LogResult, string> = { good: '顺利', meh: '一般', bad: '不理想' }
+
+/** 复盘和记一笔时可以挂的 emoji */
+export const EMOJIS = ['🎉', '😄', '🙂', '😐', '😕', '😣', '😤', '😴', '🤔', '💡', '🔥', '🎯']
 
 /** 杂项键值：profile =「关于我」 */
 export interface Meta {
@@ -280,7 +285,7 @@ export async function deleteStrategy(id: string) {
 }
 
 /** 复盘：只计分（有效 +1、无效 −1，没执行和只记录不计分），不会改变状态。留存和淘汰由人或 AI 决定 */
-export async function addReview(strategyId: string, outcome: Outcome, note: string, criteriaMet?: CriteriaMet) {
+export async function addReview(strategyId: string, outcome: Outcome, note: string, criteriaMet?: CriteriaMet, emoji?: string) {
   await db.transaction('rw', db.topics, db.strategies, db.reviews, async () => {
     const s = await db.strategies.get(strategyId)
     if (!s) return
@@ -292,6 +297,7 @@ export async function addReview(strategyId: string, outcome: Outcome, note: stri
       id: uid(), strategyId, delta, note, scoreAfter: score, createdAt: now, outcome, version: versionOf(s),
     }
     if (criteriaMet) r.criteriaMet = criteriaMet
+    if (emoji) r.emoji = emoji
     await db.reviews.add(r)
     await db.strategies.update(strategyId, { score, updatedAt: now, nextAskAt: now + askInterval(s.status, t) })
   })
@@ -488,9 +494,10 @@ export async function snoozeAsk(id: string, days = 3) {
 
 /* ---------------- 记一笔 ---------------- */
 
-export async function addLog(strategyId: string, note: string, result?: LogResult) {
+export async function addLog(strategyId: string, note: string, result?: LogResult, emoji?: string) {
   const l: UsageLog = { id: uid(), strategyId, note, createdAt: Date.now() }
   if (result) l.result = result
+  if (emoji) l.emoji = emoji
   await db.logs.add(l)
   return l
 }

@@ -8,6 +8,7 @@ import {
 import { daysSince, fmtRelative } from '../util'
 import { Score, StatusBadge } from './ScoreBadge'
 import { LogRow } from './QuickLog'
+import EmojiPicker from './EmojiPicker'
 
 const Editor = lazy(() => import('./Editor'))
 
@@ -21,6 +22,7 @@ export default function ReviewMode() {
   const [note, setNote] = useState('')
   const [met, setMet] = useState<CriteriaMet | undefined>()
   const [decision, setDecision] = useState<Status | undefined>()
+  const [emoji, setEmoji] = useState<string | undefined>()
   const [busy, setBusy] = useState(false)
   const [flash, setFlash] = useState<{ text: string; tone: 'pos' | 'neg' | 'info' } | null>(null)
   const [askLesson, setAskLesson] = useState(false)
@@ -59,7 +61,7 @@ export default function ReviewMode() {
     if (!s || busy) return
     if (outcome === 'note' && !note.trim()) { noteRef.current?.focus(); return }
     setBusy(true)
-    await addReview(s.id, outcome, note.trim(), s.criteria?.trim() && outcome !== 'skipped' && outcome !== 'note' ? met : undefined)
+    await addReview(s.id, outcome, note.trim(), s.criteria?.trim() && outcome !== 'skipped' && outcome !== 'note' ? met : undefined, emoji)
     const label = outcome === 'worked' ? '+1' : outcome === 'failed' ? '−1' : outcome === 'skipped' ? '记下了：没怎么执行' : '记下了'
     const to = decision && decision !== s.status ? decision : undefined
     if (to === 'eliminated') {
@@ -170,6 +172,7 @@ export default function ReviewMode() {
                 {history.slice(0, 3).map((r) => (
                   <div key={r.id} className="review-history-row">
                     <span className={`delta ${r.delta > 0 ? 'pos' : r.delta < 0 ? 'neg' : ''}`}>{r.event ? 'v' : r.delta > 0 ? `+${r.delta}` : r.delta < 0 ? r.delta : '·'}</span>
+                    {r.emoji && <span className="log-emoji">{r.emoji}</span>}
                     <span>
                       {!r.event && outcomeOf(r) === 'skipped' && <span className="muted">没怎么执行 · </span>}
                       {r.note || (r.statusChange && `${STATUS_LABEL[r.statusChange.from as Status]} → ${STATUS_LABEL[r.statusChange.to as Status]}`)}
@@ -196,6 +199,7 @@ export default function ReviewMode() {
                     ))}
                   </div>
                 )}
+                <EmojiPicker value={emoji} onChange={setEmoji} />
                 <textarea id="review-note" ref={noteRef} rows={3} value={note} onChange={(e) => setNote(e.target.value)}
                   placeholder="写下感受、观察或想调整的地方（选「只记录」时必填）" />
                 <div className="met-row">

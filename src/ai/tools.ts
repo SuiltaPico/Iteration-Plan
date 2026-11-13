@@ -108,9 +108,9 @@ export const tools = {
         status: s.isDraft ? 'draft' : s.status, version: versionOf(s), lesson: s.lesson ?? '',
         topicName: t?.name, problem: p?.title ?? null, derivedFrom: parent ? { id: parent.id, title: parent.title } : null,
         createdAt: fmtDate(s.createdAt), daysInUse: daysSince(s.createdAt),
-        usageLogs: logs.slice(-30).map((l) => ({ at: fmtDate(l.createdAt), result: l.result ? LOG_RESULT_LABEL[l.result] : undefined, note: l.note })),
+        usageLogs: logs.slice(-30).map((l) => ({ at: fmtDate(l.createdAt), result: l.result ? LOG_RESULT_LABEL[l.result] : undefined, note: l.note, emoji: l.emoji })),
         reviews: reviews.slice(-30).map((r) => ({
-          at: fmtDate(r.createdAt), version: r.version ?? 1,
+          at: fmtDate(r.createdAt), version: r.version ?? 1, emoji: r.emoji,
           outcome: r.event ? '开始新版本' : OUTCOME_LABEL[outcomeOf(r)], criteriaMet: r.criteriaMet, note: r.note, scoreAfter: r.scoreAfter,
           statusChange: r.statusChange ? `${STATUS_LABEL[r.statusChange.from]}→${STATUS_LABEL[r.statusChange.to]}` : undefined,
         })),

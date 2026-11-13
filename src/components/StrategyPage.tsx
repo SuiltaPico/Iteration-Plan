@@ -349,6 +349,7 @@ function StrategyView({ s }: { s: Strategy }) {
                       {r.delta > 0 ? `+${r.delta}` : r.delta < 0 ? r.delta : '·'}
                     </span>
                     <div className="tl-body">
+                      {r.emoji && <span className="tl-emoji">{r.emoji}</span>}
                       {r.statusChange && <div className="status-change">{STATUS_LABEL[r.statusChange.from]} → <b>{STATUS_LABEL[r.statusChange.to]}</b></div>}
                       {!r.statusChange && r.outcome && r.outcome !== 'note' && (
                         <div className={`outcome o-${outcomeOf(r)}`}>{OUTCOME_LABEL[outcomeOf(r)]}{r.criteriaMet && <span className="muted"> · 标准{CRITERIA_LABEL[r.criteriaMet]}</span>}</div>

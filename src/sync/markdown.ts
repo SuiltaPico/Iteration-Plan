@@ -71,11 +71,11 @@ function strategyMd(s: Strategy, d: Backup, problem: string) {
     ...(s.criteria?.trim() ? [`> 判断标准：${s.criteria.trim()}`, ''] : []),
     s.content.trim(), '',
     ...(s.status === 'eliminated' && s.lesson?.trim() ? ['## 淘汰原因', '', s.lesson.trim(), ''] : []),
-    ...(logs.length ? ['## 使用记录', '', ...logs.map((l) => `- ${fmtDate(l.createdAt)}${l.result ? ` 【${LOG_RESULT_LABEL[l.result]}】` : ''} ${l.note}`), ''] : []),
+    ...(logs.length ? ['## 使用记录', '', ...logs.map((l) => `- ${fmtDate(l.createdAt)}${l.emoji ? ` ${l.emoji}` : ''}${l.result ? ` 【${LOG_RESULT_LABEL[l.result]}】` : ''} ${l.note}`), ''] : []),
     ...(reviews.length ? ['## 复盘记录', '', ...reviews.map((r) => {
       if (r.event) return `- ${fmtDate(r.createdAt)} —— 开始第 ${r.version} 版 ——`
       const head = r.statusChange ? `${STATUS_LABEL[r.statusChange.from]} → ${STATUS_LABEL[r.statusChange.to]}` : OUTCOME_LABEL[outcomeOf(r)]
-      return `- ${fmtDate(r.createdAt)} v${r.version ?? 1} 【${head}】${r.criteriaMet ? `（标准${CRITERIA_LABEL[r.criteriaMet]}）` : ''} ${r.note}`.trimEnd()
+      return `- ${fmtDate(r.createdAt)} v${r.version ?? 1}${r.emoji ? ` ${r.emoji}` : ''} 【${head}】${r.criteriaMet ? `（标准${CRITERIA_LABEL[r.criteriaMet]}）` : ''} ${r.note}`.trimEnd()
     }), ''] : []),
   ]
   return [...fm, ...body].join('\n')

@@ -621,3 +621,11 @@ textarea { resize: vertical; }
 .web-box { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 10px; background: var(--surface-2); }
 .switch-row { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 14px; }
 .switch-row input { width: 16px; height: 16px; accent-color: var(--primary); }
+
+/* emoji */
+.emoji-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.emoji { border: 1px solid transparent; background: none; border-radius: 9px; width: 36px; height: 36px; font-size: 20px; cursor: pointer; line-height: 1; filter: grayscale(.4); opacity: .75; }
+.emoji:hover { background: var(--surface-2); opacity: 1; filter: none; }
+.emoji.on { background: var(--primary-soft); border-color: var(--primary); opacity: 1; filter: none; }
+.log-emoji { font-size: 15px; line-height: 1; flex: none; }
+.tl-emoji { display: inline-block; font-size: 15px; line-height: 1; margin-bottom: 2px; }
