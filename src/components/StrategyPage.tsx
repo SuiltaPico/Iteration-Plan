@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { addReview, db, deleteStrategy, setStatus, STATUS_LABEL, updateStrategy, type Strategy } from '../db'
 import { Score, ScoreMeter, StatusBadge } from './ScoreBadge'
+import { confirmDialog } from './Dialogs'
 import { daysSince, fmtDate } from '../util'
 
 const Editor = lazy(() => import('./Editor'))
@@ -64,7 +65,7 @@ function StrategyView({ s }: { s: Strategy }) {
   }
 
   async function remove() {
-    if (!confirm('删除这个策略？此操作不可撤销。')) return
+    if (!(await confirmDialog('删除这个策略？此操作不可撤销。', { ok: '删除' }))) return
     const tid = s.topicId
     pending.current = null
     await deleteStrategy(s.id)

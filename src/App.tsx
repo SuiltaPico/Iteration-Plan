@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar'
 import Overview from './components/Overview'
 import TopicPage from './components/TopicPage'
 import StrategyPage from './components/StrategyPage'
+import { DialogHost } from './components/Dialogs'
 
 export default function App() {
   const [navOpen, setNavOpen] = useState(false)
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="*" element={<Overview />} />
         </Routes>
       </main>
+      <DialogHost />
     </div>
   )
 }

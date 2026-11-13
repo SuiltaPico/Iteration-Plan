@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { createStrategy, db, deleteTopic, STATUS_LABEL, type Status } from '../db'
 import StrategyCard from './StrategyCard'
 import TopicDialog from './TopicDialog'
+import { confirmDialog } from './Dialogs'
 
 type Filter = 'active' | Status | 'all'
 type Sort = 'score' | 'updated' | 'created'
@@ -31,7 +32,7 @@ export default function TopicPage() {
   }
 
   async function remove() {
-    if (!confirm(`删除主题「${topic!.name}」及其下 ${strategies!.length} 个策略？此操作不可撤销。`)) return
+    if (!(await confirmDialog(`删除主题「${topic!.name}」及其下 ${strategies!.length} 个策略？此操作不可撤销。`, { ok: '删除' }))) return
     await deleteTopic(id)
     navigate('/')
   }

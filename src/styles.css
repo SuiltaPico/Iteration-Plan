@@ -274,3 +274,21 @@ textarea { resize: vertical; }
   .doc { padding: 20px 0 28px; }
   .row2 { grid-template-columns: 1fr; }
 }
+
+/* ---------- dialogs ---------- */
+.modal.wide { max-width: 560px; }
+.modal.confirm p { margin: 0; font-size: 15px; }
+.row-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.mono { font-family: "JetBrains Mono", Menlo, Consolas, monospace; font-size: 12px; }
+.btn.danger-fill { background: var(--neg); border-color: var(--neg); color: #fff; font-weight: 600; }
+.btn.danger-fill:hover { filter: brightness(1.08); background: var(--neg); }
+.btn:focus-visible, .tab:focus-visible, .qbtn:focus-visible, .link-btn:focus-visible, .nav-item:focus-visible, .card:focus-visible {
+  outline: 2px solid var(--primary); outline-offset: 2px;
+}
+.toast {
+  position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+  background: var(--text); color: var(--surface); padding: 10px 16px; border-radius: 10px; box-shadow: var(--shadow-lg);
+  z-index: 200; font-size: 13px; animation: toast-in .2s ease-out;
+}
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

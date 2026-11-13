@@ -10,7 +10,7 @@
   - 也可手动淘汰 / 直接留存 / 恢复试用（恢复时分数归零）
 - **浏览**：总览页按主题列出所有在用策略（按分数排序）和最近复盘记录，支持全文搜索；主题页可按状态筛选、排序。
 
-数据保存在浏览器本地（IndexedDB），不上传任何服务器。侧边栏底部可**导出 / 导入 JSON 备份**，换浏览器或设备时用它迁移数据。
+数据保存在浏览器本地（IndexedDB），不上传任何服务器。侧边栏底部「备份与恢复」可下载 / 复制 JSON 备份，或从文件 / 粘贴内容导入，换浏览器或设备时用它迁移数据。
 
 ## 开发
 
@@ -21,3 +21,11 @@ npm run build    # 构建到 dist/，可直接部署到任意静态托管（如 
 ```
 
 技术栈：Vite + React + TypeScript，Dexie (IndexedDB)，Milkdown Crepe 编辑器。
+
+## 部署到 GitHub Pages
+
+仓库自带 `.github/workflows/deploy.yml`：推送到 `main` 分支（或在 Actions 页面手动运行）时自动构建并发布。
+
+首次使用需要在仓库 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**。
+
+另有 `npm run build:single`，把全部代码与字体打成一个 JS + 一个 CSS（输出到 `dist-single/`），适合只能放少量文件的托管环境。
