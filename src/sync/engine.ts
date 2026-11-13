@@ -120,7 +120,7 @@ export function scheduleSync(delay = 4000) {
 
 /** 启动：监听数据变化，打开页面、回到页面、每 5 分钟都同步一次 */
 export function startSync() {
-  for (const t of [db.topics, db.problems, db.strategies, db.reviews, db.logs, db.meta, db.tombstones]) {
+  for (const t of [db.topics, db.problems, db.strategies, db.reviews, db.logs, db.meta, db.tombstones, db.predictions, db.ideas]) {
     t.hook('creating', () => { scheduleSync() })
     t.hook('updating', () => { scheduleSync() })
     t.hook('deleting', () => { scheduleSync() })

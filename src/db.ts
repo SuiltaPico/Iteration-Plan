@@ -111,7 +111,10 @@ export interface Tombstone {
   table: SyncTable
   at: number
 }
-export type SyncTable = 'topics' | 'problems' | 'strategies' | 'reviews' | 'logs' | 'meta'
+export type SyncTable = 'topics' | 'problems' | 'strategies' | 'reviews' | 'logs' | 'meta' | 'predictions' | 'ideas'
+
+/** 已撤下功能（预测、想法池）留下的数据：不再有界面，但保留在本地并随同步、备份原样带上，避免丢失 */
+export type LegacyRecord = { id: string; updatedAt?: number; createdAt?: number; topicId?: string; [k: string]: unknown }
 
 export const db = new Dexie('iteration-plan') as Dexie & {
   topics: EntityTable<Topic, 'id'>
@@ -122,6 +125,8 @@ export const db = new Dexie('iteration-plan') as Dexie & {
   logs: EntityTable<UsageLog, 'id'>
   meta: EntityTable<Meta, 'key'>
   tombstones: EntityTable<Tombstone, 'id'>
+  predictions: EntityTable<LegacyRecord, 'id'>
+  ideas: EntityTable<LegacyRecord, 'id'>
 }
 
 db.version(1).stores({
@@ -140,6 +145,11 @@ db.version(4).stores({
   logs: 'id, strategyId, createdAt',
   meta: 'key',
   tombstones: 'id',
+})
+// 第 5 版加过预测、想法池两张表（功能已撤下）。保留声明，已升级到第 5 版的浏览器才能正常打开数据库
+db.version(5).stores({
+  predictions: 'id, topicId, strategyId, dueAt, createdAt',
+  ideas: 'id, topicId, problemId, createdAt',
 })
 
 const bury = (table: SyncTable, ids: string[]) => {
@@ -359,20 +369,25 @@ export interface Backup {
   logs?: UsageLog[]
   meta?: Meta[]
   tombstones?: Tombstone[]
+  predictions?: LegacyRecord[]
+  ideas?: LegacyRecord[]
 }
 
 export async function exportAll(): Promise<Backup> {
-  const [topics, problems, strategies, reviews, logs, meta, tombstones] = await Promise.all([
+  const [topics, problems, strategies, reviews, logs, meta, tombstones, predictions, ideas] = await Promise.all([
     db.topics.toArray(), db.problems.toArray(), db.strategies.toArray(), db.reviews.toArray(),
-    db.logs.toArray(), db.meta.toArray(), db.tombstones.toArray(),
+    db.logs.toArray(), db.meta.toArray(), db.tombstones.toArray(), db.predictions.toArray(), db.ideas.toArray(),
   ])
-  return { app: 'iteration-plan', version: 3, exportedAt: Date.now(), topics, problems, strategies, reviews, logs, meta, tombstones }
+  return {
+    app: 'iteration-plan', version: 3, exportedAt: Date.now(), topics, problems, strategies, reviews, logs, meta, tombstones,
+    ...(predictions.length ? { predictions } : {}), ...(ideas.length ? { ideas } : {}),
+  }
 }
 
 /** 用一份完整数据替换本地数据（导入备份、同步合并后写回） */
 export async function replaceAll(data: Backup) {
-  await db.transaction('rw', [db.topics, db.problems, db.strategies, db.reviews, db.logs, db.meta, db.tombstones], async () => {
-    await Promise.all([db.topics.clear(), db.problems.clear(), db.strategies.clear(), db.reviews.clear(), db.logs.clear(), db.meta.clear(), db.tombstones.clear()])
+  await db.transaction('rw', [db.topics, db.problems, db.strategies, db.reviews, db.logs, db.meta, db.tombstones, db.predictions, db.ideas], async () => {
+    await Promise.all([db.topics.clear(), db.problems.clear(), db.strategies.clear(), db.reviews.clear(), db.logs.clear(), db.meta.clear(), db.tombstones.clear(), db.predictions.clear(), db.ideas.clear()])
     await db.topics.bulkAdd(data.topics)
     await db.problems.bulkAdd(data.problems ?? [])
     await db.strategies.bulkAdd(data.strategies)
@@ -380,6 +395,8 @@ export async function replaceAll(data: Backup) {
     await db.logs.bulkAdd(data.logs ?? [])
     await db.meta.bulkAdd(data.meta ?? [])
     await db.tombstones.bulkAdd(data.tombstones ?? [])
+    await db.predictions.bulkAdd(data.predictions ?? [])
+    await db.ideas.bulkAdd(data.ideas ?? [])
   })
 }
 
