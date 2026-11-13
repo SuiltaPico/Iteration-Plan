@@ -61,6 +61,7 @@ export default function TopicPage() {
         <div className="head-text">
           <h1><span className="dot lg" style={{ background: topic.color }} />{topic.name}</h1>
           {topic.description && <p className="muted">{topic.description}</p>}
+          <GoalLine topic={topic} onEdit={() => setEditing(true)} />
         </div>
         <div className="head-actions">
           <button className="btn ghost" onClick={() => openAi.emit({ prompt: '为当前主题想几个值得试的问题和候选策略' })}>✦ AI 出主意</button>
@@ -91,6 +92,30 @@ export default function TopicPage() {
       {editing && <TopicDialog topic={topic} onClose={() => setEditing(false)} />}
       {problemDialog && (
         <ProblemDialog topicId={id} problem={problemDialog === 'new' ? undefined : problemDialog} onClose={() => setProblemDialog(null)} />
+      )}
+    </div>
+  )
+}
+
+/* ---------------- 目标 ---------------- */
+
+function GoalLine({ topic, onEdit }: { topic: Topic; onEdit: () => void }) {
+  const [showHistory, setShowHistory] = useState(false)
+  if (!topic.goal?.trim()) {
+    return <button className="goal-empty" onClick={onEdit}>＋ 写下这个主题的目标</button>
+  }
+  const history = topic.goalHistory ?? []
+  return (
+    <div className="goal">
+      <span className="goal-label">目标</span>
+      <p>{topic.goal}</p>
+      {history.length > 0 && (
+        <button className="link-btn" onClick={() => setShowHistory(!showHistory)}>{showHistory ? '收起' : `之前的目标（${history.length}）`}</button>
+      )}
+      {showHistory && (
+        <ul className="goal-history">
+          {[...history].reverse().map((h) => <li key={h.until}><span className="muted sm">到 {fmtDate(h.until).slice(0, 10)}</span> {h.text}</li>)}
+        </ul>
       )}
     </div>
   )

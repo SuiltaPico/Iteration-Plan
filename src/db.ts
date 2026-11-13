@@ -10,6 +10,10 @@ export interface Topic {
   /** 旧版的自动留存 / 淘汰阈值，已不再使用（留存和淘汰由人或 AI 决定） */
   keepAt?: number
   eliminateAt?: number
+  /** 目标：在这个主题上想达到什么。判断策略是否有效的参照，复盘和 AI 都对照它 */
+  goal?: string
+  /** 改目标时保留的旧目标（until = 被替换的时间） */
+  goalHistory?: { text: string; until: number }[]
   /** 多久主动问一次（天）：试用中 / 已留存，默认 7 / 30 */
   askDaysTrial?: number
   askDaysKept?: number
@@ -84,6 +88,7 @@ export interface Review {
   version?: number
   /** 系统事件（例如开始新版本），不是用户的复盘 */
   event?: 'new-version'
+  emoji?: string
   createdAt: number
 }
 
@@ -94,9 +99,13 @@ export interface UsageLog {
   strategyId: string
   note: string
   result?: LogResult
+  emoji?: string
   createdAt: number
 }
 export const LOG_RESULT_LABEL: Record<LogResult, string> = { good: '顺利', meh: '一般', bad: '不理想' }
+
+/** 复盘和记一笔时可以挂的 emoji */
+export const EMOJIS = ['🎉', '😄', '🙂', '😐', '😕', '😣', '😤', '😴', '🤔', '💡', '🔥', '🎯']
 
 /** 杂项键值：profile =「关于我」 */
 export interface Meta {
@@ -182,7 +191,7 @@ const DAY = 86400000
 
 /* ---------------- 主题 ---------------- */
 
-export async function createTopic(input: Pick<Topic, 'name' | 'description' | 'color' | 'askDaysTrial' | 'askDaysKept'>) {
+export async function createTopic(input: Pick<Topic, 'name' | 'description' | 'color' | 'askDaysTrial' | 'askDaysKept' | 'goal'>) {
   const now = Date.now()
   const last = await db.topics.orderBy('order').last()
   const topic: Topic = { ...input, id: uid(), order: (last?.order ?? 0) + 1, createdAt: now, updatedAt: now }
@@ -191,7 +200,14 @@ export async function createTopic(input: Pick<Topic, 'name' | 'description' | 'c
 }
 
 export async function updateTopic(id: string, patch: Partial<Topic>) {
-  await db.topics.update(id, { ...patch, updatedAt: Date.now() })
+  const now = Date.now()
+  await db.topics.where('id').equals(id).modify((t) => {
+    // 目标改了：旧目标存进历史，复盘时能看到当时追的是什么
+    if (patch.goal !== undefined && (t.goal ?? '').trim() && patch.goal.trim() !== (t.goal ?? '').trim()) {
+      t.goalHistory = [...(t.goalHistory ?? []), { text: t.goal!.trim(), until: now }]
+    }
+    Object.assign(t, patch, { updatedAt: now })
+  })
 }
 
 export async function deleteTopic(id: string) {
@@ -280,7 +296,7 @@ export async function deleteStrategy(id: string) {
 }
 
 /** 复盘：只计分（有效 +1、无效 −1，没执行和只记录不计分），不会改变状态。留存和淘汰由人或 AI 决定 */
-export async function addReview(strategyId: string, outcome: Outcome, note: string, criteriaMet?: CriteriaMet) {
+export async function addReview(strategyId: string, outcome: Outcome, note: string, criteriaMet?: CriteriaMet, emoji?: string) {
   await db.transaction('rw', db.topics, db.strategies, db.reviews, async () => {
     const s = await db.strategies.get(strategyId)
     if (!s) return
@@ -292,6 +308,7 @@ export async function addReview(strategyId: string, outcome: Outcome, note: stri
       id: uid(), strategyId, delta, note, scoreAfter: score, createdAt: now, outcome, version: versionOf(s),
     }
     if (criteriaMet) r.criteriaMet = criteriaMet
+    if (emoji) r.emoji = emoji
     await db.reviews.add(r)
     await db.strategies.update(strategyId, { score, updatedAt: now, nextAskAt: now + askInterval(s.status, t) })
   })
@@ -488,9 +505,10 @@ export async function snoozeAsk(id: string, days = 3) {
 
 /* ---------------- 记一笔 ---------------- */
 
-export async function addLog(strategyId: string, note: string, result?: LogResult) {
+export async function addLog(strategyId: string, note: string, result?: LogResult, emoji?: string) {
   const l: UsageLog = { id: uid(), strategyId, note, createdAt: Date.now() }
   if (result) l.result = result
+  if (emoji) l.emoji = emoji
   await db.logs.add(l)
   return l
 }

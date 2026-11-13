@@ -9,6 +9,7 @@ interface Props {
 export default function TopicDialog({ topic, onClose }: Props) {
   const [name, setName] = useState(topic?.name ?? '')
   const [description, setDescription] = useState(topic?.description ?? '')
+  const [goal, setGoal] = useState(topic?.goal ?? '')
   const [color, setColor] = useState(topic?.color ?? TOPIC_COLORS[Math.floor(Math.random() * TOPIC_COLORS.length)])
   const [askTrial, setAskTrial] = useState(topic?.askDaysTrial ?? DEFAULT_ASK_DAYS.trial)
   const [askKept, setAskKept] = useState(topic?.askDaysKept ?? DEFAULT_ASK_DAYS.kept)
@@ -18,7 +19,7 @@ export default function TopicDialog({ topic, onClose }: Props) {
   async function save(e: React.FormEvent) {
     e.preventDefault()
     if (!valid) return
-    const data = { name: name.trim(), description: description.trim(), color, askDaysTrial: askTrial, askDaysKept: askKept }
+    const data = { name: name.trim(), description: description.trim(), goal: goal.trim(), color, askDaysTrial: askTrial, askDaysKept: askKept }
     if (topic) {
       await updateTopic(topic.id, data)
       onClose()
@@ -34,6 +35,12 @@ export default function TopicDialog({ topic, onClose }: Props) {
         <label className="field">
           <span>名称</span>
           <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：早起、阅读、投资、写作" />
+        </label>
+        <label className="field">
+          <span>目标</span>
+          <textarea id="topic-goal" rows={2} value={goal} onChange={(e) => setGoal(e.target.value)}
+            placeholder="在这个主题上想达到什么？例如：两年内形成一套不靠盯盘、能长期跑赢指数的投资方法" />
+          <small className="muted">判断一条策略「有效」的参照：复盘和 AI 都会对照它。可以随时改，旧目标会保留。</small>
         </label>
         <label className="field">
           <span>说明（可选）</span>

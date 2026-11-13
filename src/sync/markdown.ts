@@ -28,7 +28,7 @@ export function toMarkdownFiles(d: Backup): Record<string, string> {
     const mine = d.strategies.filter((s) => s.topicId === t.id && !s.isDraft)
     const tp = problems.filter((p) => p.topicId === t.id).sort((a, b) => a.order - b.order)
     const pname = (s: Strategy) => tp.find((p) => p.id === s.problemId)?.title ?? '未归类'
-    index.push(`## ${t.name}`, '', `[打法](${encodeURI(`${dir}/打法.md`)}) · [踩过的坑](${encodeURI(`${dir}/踩过的坑.md`)})`, '')
+    index.push(`## ${t.name}`, '', ...(t.goal?.trim() ? [`目标：${t.goal.trim()}`, ''] : []), `[打法](${encodeURI(`${dir}/打法.md`)}) · [踩过的坑](${encodeURI(`${dir}/踩过的坑.md`)})`, '')
 
     const groups = [...tp.map((p) => p.title), '未归类']
     for (const g of groups) {
@@ -44,7 +44,7 @@ export function toMarkdownFiles(d: Backup): Record<string, string> {
     }
 
     const kept = mine.filter((s) => s.status === 'kept')
-    files[`${dir}/打法.md`] = [`# ${t.name} · 打法`, '', kept.length ? '' : '还没有留存的策略。',
+    files[`${dir}/打法.md`] = [`# ${t.name} · 打法`, '', ...(t.goal?.trim() ? [`> 目标：${t.goal.trim()}`, ''] : []), kept.length ? '' : '还没有留存的策略。',
       ...groups.flatMap((g) => {
         const list = kept.filter((s) => pname(s) === g)
         return list.length ? [`## ${g}`, '', ...list.flatMap((s) => [`### ${s.title}`, '', ...(s.criteria?.trim() ? [`> 判断标准：${s.criteria.trim()}`, ''] : []), s.content.trim(), ''])] : []
@@ -71,11 +71,11 @@ function strategyMd(s: Strategy, d: Backup, problem: string) {
     ...(s.criteria?.trim() ? [`> 判断标准：${s.criteria.trim()}`, ''] : []),
     s.content.trim(), '',
     ...(s.status === 'eliminated' && s.lesson?.trim() ? ['## 淘汰原因', '', s.lesson.trim(), ''] : []),
-    ...(logs.length ? ['## 使用记录', '', ...logs.map((l) => `- ${fmtDate(l.createdAt)}${l.result ? ` 【${LOG_RESULT_LABEL[l.result]}】` : ''} ${l.note}`), ''] : []),
+    ...(logs.length ? ['## 使用记录', '', ...logs.map((l) => `- ${fmtDate(l.createdAt)}${l.emoji ? ` ${l.emoji}` : ''}${l.result ? ` 【${LOG_RESULT_LABEL[l.result]}】` : ''} ${l.note}`), ''] : []),
     ...(reviews.length ? ['## 复盘记录', '', ...reviews.map((r) => {
       if (r.event) return `- ${fmtDate(r.createdAt)} —— 开始第 ${r.version} 版 ——`
       const head = r.statusChange ? `${STATUS_LABEL[r.statusChange.from]} → ${STATUS_LABEL[r.statusChange.to]}` : OUTCOME_LABEL[outcomeOf(r)]
-      return `- ${fmtDate(r.createdAt)} v${r.version ?? 1} 【${head}】${r.criteriaMet ? `（标准${CRITERIA_LABEL[r.criteriaMet]}）` : ''} ${r.note}`.trimEnd()
+      return `- ${fmtDate(r.createdAt)} v${r.version ?? 1}${r.emoji ? ` ${r.emoji}` : ''} 【${head}】${r.criteriaMet ? `（标准${CRITERIA_LABEL[r.criteriaMet]}）` : ''} ${r.note}`.trimEnd()
     }), ''] : []),
   ]
   return [...fm, ...body].join('\n')

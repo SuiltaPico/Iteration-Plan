@@ -86,7 +86,7 @@ export default function Overview() {
                     <h2>{t.name}</h2>
                     <span className="arrow">→</span>
                   </Link>
-                  {t.description && <p className="board-desc">{t.description}</p>}
+                  {t.goal?.trim() ? <p className="board-desc"><span className="goal-tag">目标</span>{t.goal}</p> : t.description && <p className="board-desc">{t.description}</p>}
                   {list.length ? (
                     <div className="grid">
                       {list.map((s) => <StrategyCard key={s.id} s={s} topic={t} last={last.get(s.id)} problem={s.problemId ? pname.get(s.problemId) : undefined} />)}
